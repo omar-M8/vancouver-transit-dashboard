@@ -1,6 +1,10 @@
+import time 
 from fastapi import FastAPI
 
 app = FastAPI()
+
+#create globla cache memomry dictionary 
+cache_memory = {}
 
 @app.get("/")
 async def root():
