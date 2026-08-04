@@ -1,6 +1,7 @@
 import time 
-from fastapi import FastAPI
-
+from fastapi import FastAPI, HTTPException
+import httpx
+from google import gtfs_realtime_pb2
 app = FastAPI()
 
 #create globla cache memomry dictionary 
@@ -10,20 +11,39 @@ cache_memory = {}
 async def root():
     return {"message": "Hello World"}
 
+async def get_or_update_gtfs_feed():
+    """Helper function: Ensure we always have a fresh 30s GTFS feed in RAM """
+    current_time = time.time()
+    cache_key = "gtfs_realtime_all"
+
+    # If cache exists and is fresh (< 30s), return it immediately
+    if cache_key in cache_memory and (current_time - cache_memory[cache_key]["timestamp"]< 30):
+        return cache_memory[cache_key]["data"]
+
+    #Otherwise, fetch full system feed from Translink
+    else:
+        print("--- Fetching fresh GTFS feed for all of Vancouver ---")
+        api_key = "KSJk9QxERQspOR9ff9Ul"
+        url = f"https://gtfsapi.translink.ca/v3/gtfsrealtime?apikey={api_key}"
+
+        async with httpx.AsyncClient() as client:
+            response = await client.get(url)
+
+        if response.status_code != 200:
+            raise HTTPException(status_code=response.status_code, detail="Failed to fetch GTFS feed")
+
+        # Parse Protobuf binary data
+        feed = gtfs_realtime_pb2.FeedMessage()
+        feed.parseFromString(response.content)
+
+        cache_memory = {
+            "timestamp": current_time,
+            "data": feed
+        }
+
+        return feed
+
 @app.get("/transit/{station_id}")
 async def get_transit_data(station_id: str):
-    current_time = time.time()
-    if(station_id in cache_memory and current_time - cache_memory[station_id]["timestamp"] < 30):
-
-        # Cache hit! -> data is fresh
-        print("--- Fetching from internal memory cache ---")
-        return {
-            "source": "cache",
-            "data": cache_memory[station_id]["data"],
-        }
-    else:
-        # Cache miss (not it cache_memory or outdated ) -> request data from translink API
-        print("--- Cache empty or expired. Need to fetch from TransLink ---")
-
-        # placeholder message
-        return {"message": "Cache miss. Will fetch live data here next."}
+    pass
+    
