@@ -1,7 +1,8 @@
 import time 
 from fastapi import FastAPI, HTTPException
 import httpx
-from google import gtfs_realtime_pb2
+from google.transit import gtfs_realtime_pb2
+
 app = FastAPI()
 
 #create globla cache memomry dictionary 
@@ -34,9 +35,9 @@ async def get_or_update_gtfs_feed():
 
         # Parse Protobuf binary data
         feed = gtfs_realtime_pb2.FeedMessage()
-        feed.parseFromString(response.content)
+        feed.ParseFromString(response.content)
 
-        cache_memory = {
+        cache_memory[cache_key] = {
             "timestamp": current_time,
             "data": feed
         }
@@ -44,6 +45,31 @@ async def get_or_update_gtfs_feed():
         return feed
 
 @app.get("/transit/{station_id}")
-async def get_transit_data(station_id: str):
-    pass
+async def get_transit_by_station(station_id: str):
+
+    # Get the full system GTFS feed served isntaly if fresh (< 30s)
+    feed =  await get_or_update_gtfs_feed()
+
+    # Filter through feed for resrective station
+    station_updates = []
+
+    for entity in feed.entity:
+        if entity.HasField('trip_update'):
+            for stu in entity.trip_update.stop_time_update:
+                # Check if this update belongs to the stop the user asked for
+                if stu.stop_id == station_id:
+                    station_updates.append({
+                        "trip_id": entity.trip_update.trip.trip_id,
+                        "route_id": entity.trip_update.trip.route_id,
+                        "stop_sequences": stu.stop_sequences,
+                        "delay_seconds": stu.arrival.delay if stu.HasField('arrival') else 0
+                    })
+
+    # Return ONLY the data for that specific stop
+    return {
+        "station_id": station_id,
+        "results_found": len(station_updates),
+        "estimates": station_updates
+    }
+
     
