@@ -82,7 +82,7 @@ async def get_transit_by_station(station_id: str):
 @app.get("/debug/active-stops")
 async def get_active_stops():
     """
-    Retrieve a set of all stop IDs currently broadcasting live updates in the feed.
+    Retrieve full system real-time data transformations to feed dashboard metrics.
 
     Useful for debugging, inspecting feed activity, and discovering valid
     station IDs across the TransLink network.
@@ -90,15 +90,40 @@ async def get_active_stops():
 
     feed = await get_or_update_gtfs_feed()
     active_stops = set()
+    total_delayed_seconds = 0
+    total_delayed_trips = 0
+    total_trips_checked = 0
 
     for entity in feed.entity:
         if entity.HasField('trip_update'):
+            total_trips_checked += 1
+            trip_is_delayed = False
+
             for stu in entity.trip_update.stop_time_update:
                 if stu.stop_id:
                     active_stops.add(stu.stop_id)
+                if stu.HasField('arrival') and stu.arrival.HasField('delay'):
+                    total_delayed_seconds += stu.arrival.delay
+                    trip_is_delayed = True
+
+            if trip_is_delayed: 
+                total_delayed_trips += 1
+
+    # Calculate Average System Delay in minutes (delay is in seconds, so divide by 60)
+    avg_delay_mins = (total_delayed_seconds / total_delayed_trips) / 60 if total_trips_checked > 0 else 0
+    
+    # Calculate Punctuality Percentage
+    punctuality_percentage = ((total_trips_checked - total_delayed_trips) / total_trips_checked) * 100 if total_trips_checked > 0 else 100
+
+    # RETURN PERFECT COMPATIBLE JSON FOR YOUR FRONTEND CARDS
 
     return {
-        "total_active_stops_systemwide": len(active_stops),
-        "sampe_active_stops": list(active_stops)[:40]
+
+        "active_stops_broadcasting": len(active_stops),
+        "total_stops_constant": 1480,
+        "network_punctuality": round(punctuality_percentage, 1),
+        "avg_system_delay_min": round(avg_delay_mins, 1),
+        "delayed_trips_right_now": total_delayed_trips,
+        "total_active_trips": total_trips_checked
     }
     
