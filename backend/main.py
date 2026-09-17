@@ -2,6 +2,7 @@ import time
 from fastapi import FastAPI, HTTPException
 import httpx
 from google.transit import gtfs_realtime_pb2
+from fastapi.middleware.cors import CORSMiddleware
 
 app = FastAPI()
 
