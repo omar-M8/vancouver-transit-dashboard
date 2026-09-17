@@ -5,6 +5,15 @@ from google.transit import gtfs_realtime_pb2
 
 app = FastAPI()
 
+# CORS middleware to allow requests from any origin (useful for local development and testing)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allows Lovable's web sandbox to talk to local API
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 #create globla cache memomry dictionary 
 cache_memory = {}
 
@@ -116,7 +125,6 @@ async def get_active_stops():
     punctuality_percentage = ((total_trips_checked - total_delayed_trips) / total_trips_checked) * 100 if total_trips_checked > 0 else 100
 
     # RETURN PERFECT COMPATIBLE JSON FOR YOUR FRONTEND CARDS
-
     return {
 
         "active_stops_broadcasting": len(active_stops),
@@ -126,4 +134,5 @@ async def get_active_stops():
         "delayed_trips_right_now": total_delayed_trips,
         "total_active_trips": total_trips_checked
     }
+
     
