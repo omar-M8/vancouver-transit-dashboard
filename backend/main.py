@@ -1,11 +1,22 @@
 import csv
 import io
+import os
 import time
 import zipfile
+from pathlib import Path
+from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
 import httpx
 from google.transit import gtfs_realtime_pb2
 from fastapi.middleware.cors import CORSMiddleware
+
+# Load secrets from backend/.env (git-ignored); see backend/.env.example
+load_dotenv(Path(__file__).parent / ".env")
+TRANSLINK_API_KEY = os.getenv("TRANSLINK_API_KEY")
+if not TRANSLINK_API_KEY:
+    raise RuntimeError(
+        "TRANSLINK_API_KEY is not set. Copy backend/.env.example to backend/.env and add your key."
+    )
 
 app = FastAPI()
 
@@ -38,8 +49,7 @@ async def get_or_update_gtfs_feed():
     #Otherwise, fetch full system feed from Translink
     else:
         print("--- Fetching fresh GTFS feed for all of Vancouver ---")
-        api_key = "KSJk9QxERQspOR9ff9Ul"
-        url = f"https://gtfsapi.translink.ca/v3/gtfsrealtime?apikey={api_key}"
+        url = f"https://gtfsapi.translink.ca/v3/gtfsrealtime?apikey={TRANSLINK_API_KEY}"
 
         async with httpx.AsyncClient() as client:
             response = await client.get(url)
