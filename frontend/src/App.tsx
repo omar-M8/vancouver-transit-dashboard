@@ -1,122 +1,162 @@
-import { useState } from 'react'
-import reactLogo from './assets/react.svg'
-import viteLogo from './assets/vite.svg'
-import heroImg from './assets/hero.png'
-import './App.css'
+import { useEffect, useState } from 'react';
+import {
+  Container,
+  Stack,
+  Alert,
+  Group,
+  Button,
+  Tabs,
+  Text,
+  Badge,
+  Box,
+} from '@mantine/core';
+import {
+  IconAlertCircle,
+  IconSparkles,
+  IconDashboard,
+  IconServer,
+} from '@tabler/icons-react';
+import { Header } from './components/Header';
+import { MetricCards } from './components/MetricCards';
+import { StationBoard } from './components/StationBoard';
+import { Leaderboard } from './components/Leaderboard';
+import { BackendExplorer } from './components/BackendExplorer';
+import { useTransitStore } from './stores/useTransitStore';
 
-function App() {
-  const [count, setCount] = useState(0)
+export default function App() {
+  const {
+    isConnected,
+    isDemoMode,
+    backendUrl,
+    fetchDashboardData,
+    toggleDemoMode,
+  } = useTransitStore();
+
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [activeTab, setActiveTab] = useState<string | null>('dashboard');
+
+  // Initial load
+  useEffect(() => {
+    fetchDashboardData();
+  }, [fetchDashboardData]);
+
+  // Periodic refresh (30s matching TransLink GTFS-RT feed update cycle)
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const interval = setInterval(() => {
+      fetchDashboardData();
+    }, 30000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, fetchDashboardData]);
 
   return (
-    <>
-      <section id="center">
-        <div className="hero">
-          <img src={heroImg} className="base" width="170" height="179" alt="" />
-          <img src={reactLogo} className="framework" alt="React logo" />
-          <img src={viteLogo} className="vite" alt="Vite logo" />
-        </div>
-        <div>
-          <h1>Get started</h1>
-          <p>
-            Edit <code>src/App.tsx</code> and save to test <code>HMR</code>
-          </p>
-        </div>
-        <button
-          type="button"
-          className="counter"
-          onClick={() => setCount((count) => count + 1)}
-        >
-          Count is {count}
-        </button>
-      </section>
+    <Box style={{ minHeight: '100vh', backgroundColor: '#0b1118', color: '#f1f5f9' }}>
+      {/* Top Header */}
+      <Header autoRefresh={autoRefresh} setAutoRefresh={setAutoRefresh} />
 
-      <div className="ticks"></div>
+      <Container size="xl" py="lg">
+        <Stack gap="lg">
+          {/* Backend Connection Alert if Offline */}
+          {!isConnected && !isDemoMode && (
+            <Alert
+              icon={<IconAlertCircle size={20} />}
+              title="FastAPI Backend Not Detected"
+              color="yellow"
+              variant="filled"
+              radius="md"
+            >
+              <Group justify="space-between" align="center" wrap="wrap">
+                <div>
+                  <Text size="sm">
+                    Unable to reach the backend at <code>{backendUrl}</code>. Run the following command in your terminal to start it:
+                  </Text>
+                  <Text size="xs" ff="monospace" mt={4} fw={700}>
+                    backend/venv/bin/uvicorn backend.main:app --port 8000 --reload
+                  </Text>
+                </div>
+                <Group gap="xs">
+                  <Button
+                    size="xs"
+                    variant="white"
+                    color="dark"
+                    leftSection={<IconSparkles size={14} />}
+                    onClick={() => toggleDemoMode(true)}
+                  >
+                    Enable Demo Mode
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    color="white"
+                    onClick={() => fetchDashboardData()}
+                  >
+                    Retry Connection
+                  </Button>
+                </Group>
+              </Group>
+            </Alert>
+          )}
 
-      <section id="next-steps">
-        <div id="docs">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#documentation-icon"></use>
-          </svg>
-          <h2>Documentation</h2>
-          <p>Your questions, answered</p>
-          <ul>
-            <li>
-              <a href="https://vite.dev/" target="_blank">
-                <img className="logo" src={viteLogo} alt="" />
-                Explore Vite
-              </a>
-            </li>
-            <li>
-              <a href="https://react.dev/" target="_blank">
-                <img className="button-icon" src={reactLogo} alt="" />
-                Learn more
-              </a>
-            </li>
-          </ul>
-        </div>
-        <div id="social">
-          <svg className="icon" role="presentation" aria-hidden="true">
-            <use href="/icons.svg#social-icon"></use>
-          </svg>
-          <h2>Connect with us</h2>
-          <p>Join the Vite community</p>
-          <ul>
-            <li>
-              <a href="https://github.com/vitejs/vite" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#github-icon"></use>
-                </svg>
-                GitHub
-              </a>
-            </li>
-            <li>
-              <a href="https://chat.vite.dev/" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#discord-icon"></use>
-                </svg>
-                Discord
-              </a>
-            </li>
-            <li>
-              <a href="https://x.com/vite_js" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#x-icon"></use>
-                </svg>
-                X.com
-              </a>
-            </li>
-            <li>
-              <a href="https://bsky.app/profile/vite.dev" target="_blank">
-                <svg
-                  className="button-icon"
-                  role="presentation"
-                  aria-hidden="true"
-                >
-                  <use href="/icons.svg#bluesky-icon"></use>
-                </svg>
-                Bluesky
-              </a>
-            </li>
-          </ul>
-        </div>
-      </section>
+          {/* Navigation Tabs */}
+          <Tabs
+            value={activeTab}
+            onChange={setActiveTab}
+            variant="pills"
+            color="cyan"
+            styles={{
+              tab: {
+                backgroundColor: '#131e2b',
+                color: '#94a3b8',
+                border: '1px solid #1e2e3d',
+                fontWeight: 600,
+              },
+            }}
+          >
+            <Tabs.List>
+              <Tabs.Tab value="dashboard" leftSection={<IconDashboard size={16} />}>
+                Live Transit Dashboard
+              </Tabs.Tab>
+              <Tabs.Tab value="explorer" leftSection={<IconServer size={16} />}>
+                Backend API Explorer
+              </Tabs.Tab>
+            </Tabs.List>
 
-      <div className="ticks"></div>
-      <section id="spacer"></section>
-    </>
-  )
+            <Tabs.Panel value="dashboard" pt="md">
+              <Stack gap="lg">
+                {/* 1. Realtime Telemetry Metric Cards */}
+                <MetricCards />
+
+                {/* 2. Station Arrivals Board */}
+                <StationBoard />
+
+                {/* 3. Reliability Leaderboard */}
+                <Leaderboard />
+              </Stack>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="explorer" pt="md">
+              <Stack gap="lg">
+                <BackendExplorer />
+              </Stack>
+            </Tabs.Panel>
+          </Tabs>
+
+          {/* Footer Info */}
+          <Group justify="space-between" align="center" mt="xl" pt="md" style={{ borderTop: '1px solid #1e2e3d' }}>
+            <Text size="xs" c="dimmed">
+              TransLink Vancouver Open Data GTFS Realtime • FastAPI & React Mantine Telemetry
+            </Text>
+            <Group gap="xs">
+              <Badge size="xs" variant="outline" color="gray">
+                FastAPI v0.115+
+              </Badge>
+              <Badge size="xs" variant="outline" color="cyan">
+                React 19 & Mantine 9
+              </Badge>
+            </Group>
+          </Group>
+        </Stack>
+      </Container>
+    </Box>
+  );
 }
-
-export default App
