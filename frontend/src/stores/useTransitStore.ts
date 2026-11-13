@@ -43,7 +43,7 @@ export const POPULAR_STATIONS: PresetStation[] = [
   { id: '54483', name: 'Burrard Station', description: 'Downtown Financial / Expo Line' },
   { id: '50001', name: 'Granville & Georgia', description: 'Downtown Core Transit Mall' },
   { id: '51479', name: 'Commercial-Broadway', description: 'Millennium & Expo Line Transfer' },
-  { id: '51222', name: 'Metrotown Station', description: 'Burnaby Major Transit Loop' },
+  { id: '58313', name: 'Granville & Pender', description: 'Northbound Granville Transit Mall' },
   { id: '50160', name: 'Waterfront Station', description: 'SeaBus, WCE & Skytrain Terminus' },
 ];
 
