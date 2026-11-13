@@ -5,10 +5,16 @@ import time
 import zipfile
 from pathlib import Path
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 import httpx
 from google.transit import gtfs_realtime_pb2
 from fastapi.middleware.cors import CORSMiddleware
+try:
+    # Started from the repo root: `uvicorn backend.main:app` (also app.py)
+    from .stop_search import StopSearchIndex
+except ImportError:
+    # Started from inside backend/: `uvicorn main:app`
+    from stop_search import StopSearchIndex
 
 # Load secrets from backend/.env (git-ignored); see backend/.env.example
 load_dotenv(Path(__file__).parent / ".env")
@@ -82,6 +88,7 @@ async def get_or_update_stops():
       - "code_to_ids": public stop_code (the number on the sign, e.g. "50915")
                        -> set of internal stop_ids used by the real-time feed
       - "by_id":       stop_id -> {"stop_code", "stop_name"}
+      - "search":      StopSearchIndex over boardable stops, for /stops/search
     """
     current_time = time.time()
     cache_key = "gtfs_static_stops"
@@ -104,6 +111,7 @@ async def get_or_update_stops():
 
     code_to_ids: dict[str, set[str]] = {}
     by_id: dict[str, dict] = {}
+    boardable: list[dict] = []
 
     with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
         with zf.open("stops.txt") as f:
@@ -119,8 +127,17 @@ async def get_or_update_stops():
                 }
                 if stop_code:
                     code_to_ids.setdefault(stop_code, set()).add(stop_id)
+                # location_type 0/blank = a stop or platform you can board at.
+                # Skip parent stations (1) and entrances (2): the real-time
+                # feed never reports arrivals for them.
+                if (row.get("location_type") or "0").strip() == "0":
+                    boardable.append({"stop_id": stop_id, **by_id[stop_id]})
 
-    data = {"code_to_ids": code_to_ids, "by_id": by_id}
+    data = {
+        "code_to_ids": code_to_ids,
+        "by_id": by_id,
+        "search": StopSearchIndex.build(boardable),
+    }
     cache_memory[cache_key] = {"timestamp": current_time, "data": data}
     print(f"--- Loaded {len(by_id)} stops from stops.txt ---")
     return data
@@ -135,6 +152,29 @@ async def resolve_stop_ids(station_id: str) -> set[str]:
     if station_id in stops["by_id"]:
         return {station_id}
     return set()
+
+
+@app.get("/stops/search")
+async def search_stops(
+    q: str = Query(..., min_length=1, max_length=100, description='Free text, e.g. "49th and fraser"'),
+    limit: int = Query(20, ge=1, le=50),
+):
+    """
+    Find stops by name. Words can be in any order, ordinals and street types
+    are ignored, and small typos are tolerated ("frasr" finds Fraser St).
+
+    One intersection usually has several stops (one per direction), so the
+    results are meant to be shown as a pick-list using each result's "label".
+    Pass a result's stop_code (or stop_id, if it has no code) to /transit/{station_id}.
+    """
+    stops = await get_or_update_stops()
+    terms, results = stops["search"].search(q, limit=limit)
+    return {
+        "query": q,
+        "terms": terms,
+        "results_found": len(results),
+        "results": results,
+    }
 
 
 @app.get("/transit/{station_id}")

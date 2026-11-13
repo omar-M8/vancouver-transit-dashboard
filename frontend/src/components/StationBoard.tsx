@@ -1,6 +1,9 @@
-import { useState, useId } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Card,
+  Combobox,
+  Loader,
+  useCombobox,
   Text,
   Group,
   TextInput,
@@ -19,7 +22,23 @@ import {
   IconCheck,
   IconAlertTriangle,
 } from '@tabler/icons-react';
-import { useTransitStore, POPULAR_STATIONS } from '../stores/useTransitStore';
+import { useDebouncedValue } from '@mantine/hooks';
+import {
+  useTransitStore,
+  POPULAR_STATIONS,
+  type StopSearchResult,
+} from '../stores/useTransitStore';
+
+const isStopCode = (text: string) => /^\d+$/.test(text);
+
+type SearchStatus = 'idle' | 'loading' | 'done' | 'error';
+
+/** The outcome of the last finished search, tagged with the query it answers */
+interface SearchOutcome {
+  query: string;
+  status: 'done' | 'error';
+  results: StopSearchResult[];
+}
 
 export function StationBoard() {
   const {
@@ -27,24 +46,123 @@ export function StationBoard() {
     selectedStopName,
     departures,
     setSelectedStop,
+    searchStops,
     isLoading,
   } = useTransitStore();
 
-  const [inputStopId, setInputStopId] = useState(selectedStopId);
-  const datalistId = useId();
+  // The box accepts either a stop code ("50915") or free text ("49th and fraser")
+  const [query, setQuery] = useState(selectedStopId);
+  const [debouncedQuery] = useDebouncedValue(query.trim(), 250);
+  const [outcome, setOutcome] = useState<SearchOutcome | null>(null);
+
+  const combobox = useCombobox({
+    onDropdownClose: () => combobox.resetSelectedOption(),
+  });
+
+  const trimmedQuery = query.trim();
+  const isTextSearch = trimmedQuery.length >= 2 && !isStopCode(trimmedQuery);
+  const debouncedIsTextSearch = debouncedQuery.length >= 2 && !isStopCode(debouncedQuery);
+
+  // Only trust results that answer the query currently in the box
+  const outcomeIsCurrent = outcome !== null && outcome.query === debouncedQuery;
+  const results = debouncedIsTextSearch && outcomeIsCurrent ? outcome.results : [];
+  const searchStatus: SearchStatus = !debouncedIsTextSearch
+    ? 'idle'
+    : outcomeIsCurrent
+      ? outcome.status
+      : 'loading';
+
+  // Text searches hit GET /stops/search; stop codes are looked up directly on submit
+  useEffect(() => {
+    if (!debouncedIsTextSearch) return;
+    const controller = new AbortController();
+    searchStops(debouncedQuery, controller.signal)
+      .then((found) => {
+        setOutcome({ query: debouncedQuery, status: 'done', results: found });
+        combobox.selectFirstOption();
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        console.error(err);
+        setOutcome({ query: debouncedQuery, status: 'error', results: [] });
+      });
+    return () => controller.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- combobox store is stable
+  }, [debouncedQuery, debouncedIsTextSearch, searchStops]);
+
+  const selectStop = (stopId: string, stopName: string) => {
+    setQuery(stopId);
+    combobox.closeDropdown();
+    setSelectedStop(stopId, stopName);
+  };
+
+  const handleOptionSubmit = (optionValue: string) => {
+    const preset = POPULAR_STATIONS.find((s) => `preset:${s.id}` === optionValue);
+    if (preset) return selectStop(preset.id, preset.name);
+
+    const match = results.find((r) => r.stop_id === optionValue);
+    // /transit/{id} accepts the public stop code, or the GTFS stop_id when there isn't one
+    if (match) selectStop(match.stop_code || match.stop_id, match.label);
+  };
 
   const handleSearch = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    const cleanId = inputStopId.trim();
-    if (!cleanId) return;
-    const match = POPULAR_STATIONS.find((s) => s.id === cleanId);
-    setSelectedStop(cleanId, match?.name || `Stop #${cleanId}`);
+    if (!trimmedQuery) return;
+
+    if (isStopCode(trimmedQuery)) {
+      const match = POPULAR_STATIONS.find((s) => s.id === trimmedQuery);
+      selectStop(trimmedQuery, match?.name || `Stop #${trimmedQuery}`);
+      return;
+    }
+
+    // Free text: take the best match if the search has finished, otherwise show the list
+    const resultsAreCurrent = debouncedQuery === trimmedQuery && searchStatus === 'done';
+    if (resultsAreCurrent && results.length > 0) {
+      handleOptionSubmit(results[0].stop_id);
+    } else {
+      combobox.openDropdown();
+    }
   };
 
   const handleSelectPreset = (id: string, name: string) => {
-    setInputStopId(id);
-    setSelectedStop(id, name);
+    selectStop(id, name);
   };
+
+  const renderDropdownContent = () => {
+    if (!trimmedQuery) {
+      return (
+        <Combobox.Group label="Popular stations">
+          {POPULAR_STATIONS.map((s) => (
+            <Combobox.Option key={s.id} value={`preset:${s.id}`}>
+              <Group justify="space-between" wrap="nowrap" gap="xs">
+                <Text size="xs">{s.name}</Text>
+                <Text size="xs" c="dimmed">#{s.id}</Text>
+              </Group>
+            </Combobox.Option>
+          ))}
+        </Combobox.Group>
+      );
+    }
+    if (!isTextSearch) return null;
+    if (searchStatus === 'error') {
+      return <Combobox.Empty>Search unavailable. Is the backend running?</Combobox.Empty>;
+    }
+    if (searchStatus === 'done' && results.length === 0) {
+      return <Combobox.Empty>No stops match "{debouncedQuery}"</Combobox.Empty>;
+    }
+    return results.map((r) => (
+      <Combobox.Option key={r.stop_id} value={r.stop_id}>
+        <Group justify="space-between" wrap="nowrap" gap="xs">
+          <Text size="xs">{r.label}</Text>
+          <Text size="xs" c="dimmed" style={{ flexShrink: 0 }}>
+            #{r.stop_code || r.stop_id}
+          </Text>
+        </Group>
+      </Combobox.Option>
+    ));
+  };
+
+  const dropdownContent = renderDropdownContent();
 
   const formatDelay = (seconds: number) => {
     const absSeconds = Math.abs(seconds);
@@ -95,29 +213,54 @@ export function StationBoard() {
 
           {/* Search Form */}
           <form onSubmit={handleSearch} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-            <TextInput
-              size="xs"
-              placeholder="Enter Station ID (e.g. 50915)"
-              value={inputStopId}
-              onChange={(e) => setInputStopId(e.currentTarget.value)}
-              list={datalistId}
-              leftSection={<IconSearch size={14} />}
+            <Combobox
+              store={combobox}
+              onOptionSubmit={handleOptionSubmit}
+              position="bottom-end"
+              width={360}
               styles={{
-                input: {
-                  backgroundColor: '#0f172a',
-                  borderColor: '#243547',
-                  color: '#f1f5f9',
-                  width: 220,
-                },
+                dropdown: { backgroundColor: '#0f172a', borderColor: '#243547' },
+                option: { color: '#f1f5f9' },
+                groupLabel: { color: '#94a3b8' },
+                empty: { color: '#94a3b8' },
               }}
-            />
-            <datalist id={datalistId}>
-              {POPULAR_STATIONS.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </datalist>
+            >
+              <Combobox.Target>
+                <TextInput
+                  size="xs"
+                  placeholder="Stop # or intersection (49th and fraser)"
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.currentTarget.value);
+                    combobox.openDropdown();
+                    combobox.updateSelectedOptionIndex();
+                  }}
+                  onFocus={() => combobox.openDropdown()}
+                  onClick={() => combobox.openDropdown()}
+                  onBlur={() => combobox.closeDropdown()}
+                  leftSection={<IconSearch size={14} />}
+                  rightSection={
+                    isTextSearch && (searchStatus === 'loading' || debouncedQuery !== trimmedQuery) ? (
+                      <Loader size={12} color="cyan" />
+                    ) : null
+                  }
+                  styles={{
+                    input: {
+                      backgroundColor: '#0f172a',
+                      borderColor: '#243547',
+                      color: '#f1f5f9',
+                      width: 260,
+                    },
+                  }}
+                />
+              </Combobox.Target>
+
+              <Combobox.Dropdown hidden={dropdownContent === null || (Array.isArray(dropdownContent) && dropdownContent.length === 0)}>
+                <Combobox.Options mah={320} style={{ overflowY: 'auto' }}>
+                  {dropdownContent}
+                </Combobox.Options>
+              </Combobox.Dropdown>
+            </Combobox>
             <Button size="xs" color="cyan" type="submit" loading={isLoading}>
               Lookup
             </Button>
