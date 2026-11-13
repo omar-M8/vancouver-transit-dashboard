@@ -32,6 +32,17 @@ export interface LeaderboardItem {
   percentDelayed: number;
 }
 
+/** One row from GET /stops/search */
+export interface StopSearchResult {
+  stop_id: string;
+  stop_code: string;
+  stop_name: string;
+  direction: string | null;
+  /** Display name with the direction moved to the end, e.g. "Fraser St @ E 49 Ave, Northbound" */
+  label: string;
+  score: number;
+}
+
 export interface PresetStation {
   id: string;
   name: string;
@@ -140,6 +151,7 @@ interface TransitStore {
   toggleDemoMode: (enabled?: boolean) => void;
   fetchDashboardData: () => Promise<void>;
   checkBackendHealth: () => Promise<boolean>;
+  searchStops: (query: string, signal?: AbortSignal) => Promise<StopSearchResult[]>;
 }
 
 export const useTransitStore = create<TransitStore>((set, get) => ({
@@ -202,6 +214,15 @@ export const useTransitStore = create<TransitStore>((set, get) => ({
       set({ isConnected: false });
       return false;
     }
+  },
+
+  searchStops: async (query: string, signal?: AbortSignal) => {
+    const { backendUrl } = get();
+    const params = new URLSearchParams({ q: query, limit: '20' });
+    const res = await fetch(`${backendUrl}/stops/search?${params}`, { signal });
+    if (!res.ok) throw new Error(`Stop search failed (${res.status})`);
+    const data = await res.json();
+    return (data.results ?? []) as StopSearchResult[];
   },
 
   fetchDashboardData: async () => {
