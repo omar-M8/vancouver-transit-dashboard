@@ -42,26 +42,36 @@ cache_memory = {}
 async def root():
     return {"message": "Hello World"}
 
-async def get_or_update_gtfs_feed():
-    """Helper function: Ensure we always have a fresh 30s GTFS feed in RAM """
+# TransLink GTFS-Realtime v3 feeds:
+#   gtfsrealtime -> trip updates (arrival/delay estimates)
+#   gtfsposition -> vehicle positions (lat/lon of every active bus/train)
+#   gtfsalerts   -> service alerts
+GTFS_RT_FEEDS = {"gtfsrealtime", "gtfsposition", "gtfsalerts"}
+
+
+async def get_or_update_gtfs_feed(feed_name: str = "gtfsrealtime"):
+    """Helper function: Ensure we always have a fresh 30s copy of a GTFS-RT feed in RAM"""
+    if feed_name not in GTFS_RT_FEEDS:
+        raise ValueError(f"Unknown GTFS-RT feed: {feed_name}")
+
     current_time = time.time()
-    cache_key = "gtfs_realtime_all"
+    cache_key = f"gtfs_rt_{feed_name}"  # each feed gets its own cache entry
 
     # If cache exists and is fresh (< 30s), return it immediately
-    print("--- Returned directly from Cache!! ---")
     if cache_key in cache_memory and (current_time - cache_memory[cache_key]["timestamp"]< 30):
+        print(f"--- Returned {feed_name} directly from Cache!! ---")
         return cache_memory[cache_key]["data"]
 
     #Otherwise, fetch full system feed from Translink
     else:
-        print("--- Fetching fresh GTFS feed for all of Vancouver ---")
-        url = f"https://gtfsapi.translink.ca/v3/gtfsrealtime?apikey={TRANSLINK_API_KEY}"
+        print(f"--- Fetching fresh {feed_name} feed for all of Vancouver ---")
+        url = f"https://gtfsapi.translink.ca/v3/{feed_name}"
 
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url)
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.get(url, params={"apikey": TRANSLINK_API_KEY})
 
         if response.status_code != 200:
-            raise HTTPException(status_code=response.status_code, detail="Failed to fetch GTFS feed")
+            raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch GTFS feed ({feed_name})")
 
         # Parse Protobuf binary data
         feed = gtfs_realtime_pb2.FeedMessage()
@@ -318,4 +328,4 @@ async def get_dashboard_metrics(station_id: str):
         ],
     }
 
-    
+
