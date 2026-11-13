@@ -1,4 +1,7 @@
-import time 
+import csv
+import io
+import time
+import zipfile
 from fastapi import FastAPI, HTTPException
 import httpx
 from google.transit import gtfs_realtime_pb2
@@ -55,6 +58,75 @@ async def get_or_update_gtfs_feed():
 
         return feed
 
+
+# Static GTFS schedule (contains stops.txt). It is ~16 MB and changes rarely,
+# so it is cached far longer than the 30s real-time feed.
+STATIC_GTFS_URL = "https://gtfs-static.translink.ca/gtfs/google_transit.zip"
+STOPS_CACHE_TTL_SECONDS = 24 * 60 * 60
+
+
+async def get_or_update_stops():
+    """Helper function: Load stops.txt from the static GTFS zip, cached for 24h.
+
+    Returns a dict with:
+      - "code_to_ids": public stop_code (the number on the sign, e.g. "50915")
+                       -> set of internal stop_ids used by the real-time feed
+      - "by_id":       stop_id -> {"stop_code", "stop_name"}
+    """
+    current_time = time.time()
+    cache_key = "gtfs_static_stops"
+
+    cached = cache_memory.get(cache_key)
+    if cached and (current_time - cached["timestamp"] < STOPS_CACHE_TTL_SECONDS):
+        return cached["data"]
+
+    print("--- Fetching static GTFS stops.txt ---")
+    try:
+        async with httpx.AsyncClient(timeout=60, follow_redirects=True) as client:
+            response = await client.get(STATIC_GTFS_URL)
+        response.raise_for_status()
+    except httpx.HTTPError as exc:
+        # Keep serving stale stop data rather than failing outright
+        if cached:
+            print(f"--- Static GTFS refresh failed ({exc}); using stale stops ---")
+            return cached["data"]
+        raise HTTPException(status_code=502, detail="Failed to fetch static GTFS (stops.txt)")
+
+    code_to_ids: dict[str, set[str]] = {}
+    by_id: dict[str, dict] = {}
+
+    with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+        with zf.open("stops.txt") as f:
+            reader = csv.DictReader(io.TextIOWrapper(f, encoding="utf-8-sig"))
+            for row in reader:
+                stop_id = (row.get("stop_id") or "").strip()
+                stop_code = (row.get("stop_code") or "").strip()
+                if not stop_id:
+                    continue
+                by_id[stop_id] = {
+                    "stop_code": stop_code,
+                    "stop_name": (row.get("stop_name") or "").strip(),
+                }
+                if stop_code:
+                    code_to_ids.setdefault(stop_code, set()).add(stop_id)
+
+    data = {"code_to_ids": code_to_ids, "by_id": by_id}
+    cache_memory[cache_key] = {"timestamp": current_time, "data": data}
+    print(f"--- Loaded {len(by_id)} stops from stops.txt ---")
+    return data
+
+
+async def resolve_stop_ids(station_id: str) -> set[str]:
+    """Translate a public stop code (e.g. "50915") into the internal stop_id(s)
+    the real-time feed uses. Falls back to treating the input as a stop_id."""
+    stops = await get_or_update_stops()
+    if station_id in stops["code_to_ids"]:
+        return stops["code_to_ids"][station_id]
+    if station_id in stops["by_id"]:
+        return {station_id}
+    return set()
+
+
 @app.get("/transit/{station_id}")
 async def get_transit_by_station(station_id: str):
     """
@@ -67,6 +139,14 @@ async def get_transit_by_station(station_id: str):
     # Get the full system GTFS feed served isntaly if fresh (< 30s)
     feed =  await get_or_update_gtfs_feed()
 
+    # The feed uses internal stop_ids, not the public stop code users type in
+    stop_ids = await resolve_stop_ids(station_id)
+    stops = await get_or_update_stops()
+    stop_name = next(
+        (stops["by_id"][sid]["stop_name"] for sid in stop_ids if sid in stops["by_id"]),
+        None,
+    )
+
     # Filter through feed for resrective station
     station_updates = []
 
@@ -74,7 +154,7 @@ async def get_transit_by_station(station_id: str):
         if entity.HasField('trip_update'):
             for stu in entity.trip_update.stop_time_update:
                 # Check if this update belongs to the stop the user asked for
-                if stu.stop_id == station_id:
+                if stu.stop_id in stop_ids:
                     station_updates.append({
                         "trip_id": entity.trip_update.trip.trip_id,
                         "route_id": entity.trip_update.trip.route_id,
@@ -85,6 +165,8 @@ async def get_transit_by_station(station_id: str):
     # Return ONLY the data for that specific stop
     return {
         "station_id": station_id,
+        "stop_found": bool(stop_ids),
+        "stop_name": stop_name,
         "results_found": len(station_updates),
         "estimates": station_updates
     }
