@@ -47,9 +47,10 @@ async def root():
 #   gtfsposition -> vehicle positions (lat/lon of every active bus/train)
 #   gtfsalerts   -> service alerts
 GTFS_RT_FEEDS = {"gtfsrealtime", "gtfsposition", "gtfsalerts"}
+GTFS_RT_TIMEOUT_SECONDS = 10
 
 
-async def get_or_update_gtfs_feed(feed_name: str = "gtfsrealtime"):
+async def get_feed(feed_name: str):
     """Helper function: Ensure we always have a fresh 30s copy of a GTFS-RT feed in RAM"""
     if feed_name not in GTFS_RT_FEEDS:
         raise ValueError(f"Unknown GTFS-RT feed: {feed_name}")
@@ -67,8 +68,13 @@ async def get_or_update_gtfs_feed(feed_name: str = "gtfsrealtime"):
         print(f"--- Fetching fresh {feed_name} feed for all of Vancouver ---")
         url = f"https://gtfsapi.translink.ca/v3/{feed_name}"
 
-        async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.get(url, params={"apikey": TRANSLINK_API_KEY})
+        try:
+            async with httpx.AsyncClient(timeout=GTFS_RT_TIMEOUT_SECONDS) as client:
+                response = await client.get(url, params={"apikey": TRANSLINK_API_KEY})
+        except httpx.TimeoutException:
+            raise HTTPException(status_code=504, detail=f"Timed out fetching GTFS feed ({feed_name})")
+        except httpx.HTTPError:
+            raise HTTPException(status_code=502, detail=f"Failed to fetch GTFS feed ({feed_name})")
 
         if response.status_code != 200:
             raise HTTPException(status_code=response.status_code, detail=f"Failed to fetch GTFS feed ({feed_name})")
@@ -197,7 +203,7 @@ async def get_transit_by_station(station_id: str):
     """
 
     # Get the full system GTFS feed served isntaly if fresh (< 30s)
-    feed =  await get_or_update_gtfs_feed()
+    feed =  await get_feed("gtfsrealtime")
 
     # The feed uses internal stop_ids, not the public stop code users type in
     stop_ids = await resolve_stop_ids(station_id)
@@ -240,7 +246,7 @@ async def get_active_stops():
     station IDs across the TransLink network.
     """
 
-    feed = await get_or_update_gtfs_feed()
+    feed = await get_feed("gtfsrealtime")
     active_stops = set()
     total_delayed_seconds = 0
     total_delayed_trips = 0
@@ -330,7 +336,7 @@ async def get_dashboard_metrics(station_id: str):
 
 async def get_active_vehicles(route_id: str | None = None):
     "Retrive all active vehicles from the GTFS Realtime feed, including their current location and trip information."
-    feed = await get_or_update_gtfs_feed("gtfsposition")
+    feed = await get_feed("gtfsposition")
 
     vehicles = []
     for entity in feed.entity:
