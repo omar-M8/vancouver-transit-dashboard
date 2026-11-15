@@ -1,0 +1,152 @@
+/* Rounded, bordered frame the map fills */
+.mapFrame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  border: 1px solid #1e2e3d;
+  background-color: #0b1118;
+}
+
+/* Shared look for every floating panel on the map */
+.overlay {
+  position: absolute;
+  z-index: 2;
+  color: #f1f5f9;
+  background-color: rgba(13, 20, 30, 0.86);
+  border: 1px solid rgba(51, 65, 85, 0.65);
+  border-radius: 10px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.liveIndicator {
+  top: 12px;
+  left: 12px;
+  padding: 7px 12px;
+}
+
+.layerToggles {
+  top: 12px;
+  right: 12px;
+  padding: 4px;
+}
+
+.legend {
+  bottom: 12px;
+  left: 12px;
+  padding: 7px 12px;
+  /* leave room for the control stack on the right */
+  max-width: calc(100% - 84px);
+}
+
+.controls {
+  right: 12px;
+  /* sits above the attribution */
+  bottom: 40px;
+  padding: 4px;
+}
+
+.stopChip {
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 4px 4px 4px 10px;
+  max-width: calc(100% - 24px);
+}
+
+/* The details panel is read closely, so it's nearly opaque (the legend shouldn't show through) */
+.detailsPanel,
+.detailsSheet {
+  background-color: rgba(13, 20, 30, 0.97);
+}
+
+.detailsPanel {
+  z-index: 3;
+  top: 60px;
+  right: 12px;
+  width: 300px;
+  max-height: calc(100% - 200px);
+  overflow-y: auto;
+  padding: 12px 14px;
+}
+
+/* Bottom sheet on narrow screens */
+.detailsSheet {
+  z-index: 3;
+  left: 8px;
+  right: 8px;
+  bottom: 8px;
+  max-height: 65%;
+  overflow-y: auto;
+  padding: 8px 14px 14px;
+}
+
+.sheetHandle {
+  width: 36px;
+  height: 4px;
+  margin: 0 auto 8px;
+  border-radius: 2px;
+  background-color: rgba(148, 163, 184, 0.45);
+}
+
+@media (max-width: 48em) {
+  /* leave room for the icon-only layer toggles on the right */
+  .liveIndicator {
+    max-width: calc(100% - 140px);
+  }
+
+  .stopChip {
+    top: 72px;
+  }
+}
+
+.legendDot,
+.liveDot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.liveDot {
+  background-color: #34d399;
+  animation: livePulse 2s ease-out infinite;
+}
+
+@keyframes livePulse {
+  0% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 6px rgba(52, 211, 153, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(52, 211, 153, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .liveDot {
+    animation: none;
+  }
+}
+
+/* Hover tooltip. pointer-events: none stops it stealing the hover from the dot. */
+.vehiclePopup {
+  pointer-events: none;
+}
+
+.vehiclePopup :global(.maplibregl-popup-content) {
+  padding: 6px 10px;
+  color: #f1f5f9;
+  background-color: rgba(13, 20, 30, 0.95);
+  border: 1px solid rgba(51, 65, 85, 0.8);
+  border-radius: 8px;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+
+.vehiclePopup:global(.maplibregl-popup-anchor-bottom) :global(.maplibregl-popup-tip) {
+  border-top-color: rgba(13, 20, 30, 0.95);
+}
