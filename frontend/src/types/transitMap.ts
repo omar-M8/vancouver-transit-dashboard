@@ -63,6 +63,29 @@ export interface StopProperties {
 
 export type StopFeatureCollection = FeatureCollection<Point, StopProperties>;
 
+/** One route from GET /routes, for the route filter */
+export interface RouteSummary {
+  routeId: string;
+  /** The public route number ("099", "R4"); empty for SkyTrain lines and SeaBus */
+  shortName: string;
+  longName: string;
+  color: string | null;
+}
+
+/** One alert from GET /alerts (only alerts in effect right now are returned) */
+export interface ServiceAlert {
+  id: string;
+  header: string;
+  description: string;
+  /** GTFS-RT effect name, e.g. "DETOUR", "REDUCED_SERVICE" */
+  effect: string;
+  cause: string;
+  severity: string;
+  routeIds: string[];
+  stopIds: string[];
+  url: string | null;
+}
+
 /** A lazily fetched map layer: nothing is requested until the layer is first needed */
 export interface LazyLayer<T> {
   status: 'idle' | 'loading' | 'ready' | 'error';
