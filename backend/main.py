@@ -70,7 +70,11 @@ GTFS_RT_TIMEOUT_SECONDS = 10
 
 
 async def get_feed(feed_name: str):
-    """Helper function: Ensure we always have a fresh 30s copy of a GTFS-RT feed in RAM"""
+    """Parsed GTFS-RT feed, served from a 30 s in-memory cache.
+
+    One upstream request per feed per 30 s, however many endpoints ask.
+    Raises 504 on timeout and 502 on network or non-200 errors.
+    """
     if feed_name not in GTFS_RT_FEEDS:
         raise ValueError(f"Unknown GTFS-RT feed: {feed_name}")
 
@@ -248,10 +252,11 @@ async def get_route_shape(route_id: str):
 @app.get("/transit/{station_id}")
 async def get_transit_by_station(station_id: str):
     """
-    Fetch live trip updates filtered for a specific station or stop ID.
+    Live arrival predictions for one stop (stop code or GTFS stop_id).
 
-    Queries the global GTFS Realtime feed and extracts arrival estimates,
-    route identifiers, and delay information for the requested stop.
+    Scans every trip update in the feed for this stop and returns each trip's
+    route, headsign, predicted arrival (epoch seconds) and delay. Unknown stops
+    return stop_found=false with no estimates rather than a 404.
     """
 
     # Get the full system GTFS feed served isntaly if fresh (< 30s)
@@ -297,10 +302,11 @@ async def get_transit_by_station(station_id: str):
 @app.get("/debug/active-stops")
 async def get_active_stops():
     """
-    Retrieve full system real-time data transformations to feed dashboard metrics.
+    Network-wide metrics from the trip-updates feed: stops with predictions,
+    active trips, punctuality and average delay.
 
-    Useful for debugging, inspecting feed activity, and discovering valid
-    station IDs across the TransLink network.
+    Note: a trip counts as "delayed" if any stop reports a delay value (even 0
+    or early), and total_stops_constant is a fixed placeholder.
     """
 
     feed = await get_feed("gtfsrealtime")
@@ -347,6 +353,7 @@ ON_TIME_WINDOW_SECONDS = 60
 
 
 def delay_status(delay_seconds: int) -> str:
+    """"LATE", "EARLY" or "ON_TIME" (within ±60 s); shared by departures and vehicles."""
     if delay_seconds > ON_TIME_WINDOW_SECONDS:
         return "LATE"
     if delay_seconds < -ON_TIME_WINDOW_SECONDS:
@@ -357,8 +364,10 @@ def delay_status(delay_seconds: int) -> str:
 @app.get("/metrics/dashboard/{station_id}")
 async def get_dashboard_metrics(station_id: str):
     """
-    Consolidated dashboard endpoint returning system metrics, station departures,
-    and route leaderboard.
+    Everything the dashboard needs in one call: system metrics, the stop's
+    departures (soonest first, with ETA in minutes) and the route leaderboard.
+
+    The leaderboard is hardcoded sample data for now.
     """
     system_metrics = await get_active_stops()
     station_data = await get_transit_by_station(station_id)
