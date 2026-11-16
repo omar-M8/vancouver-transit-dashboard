@@ -5,11 +5,12 @@ import type {
 } from '../../types/transitMap';
 
 /**
- * Phase 1 only: ~10 fake vehicles that exercise every delay color.
- * Replaced by GET /vehicles in Phase 3.
+ * ~10 fake vehicles that exercise every delay color.
+ * Shown only in demo mode; otherwise the map uses GET /vehicles.
  */
 
-type MockVehicle = Omit<VehicleProperties, 'status' | 'timestamp'> & {
+type MockVehicle = Omit<VehicleProperties, 'status' | 'timestamp' | 'delaySeconds'> & {
+  delaySeconds: number;
   lon: number;
   lat: number;
   /** How many seconds before page load the position was reported */
@@ -92,12 +93,22 @@ const MOCK_VEHICLES: MockVehicle[] = [
   },
 ];
 
+/**
+ * Determines the status of a vehicle based on its delay.
+ * @param delaySeconds vehicle delay in seconds
+ * @returns one of the three statuses: "ON_TIME", "LATE", or "EARLY"
+ */
 function statusFor(delaySeconds: number): VehicleStatus {
   if (delaySeconds > 60) return 'LATE';
   if (delaySeconds < -60) return 'EARLY';
   return 'ON_TIME';
 }
 
+/**
+ * Builds a mock GeoJSON FeatureCollection of vehicles for demo mode.
+ * @param nowMs current time in milliseconds
+ * @returns a GeoJSON FeatureCollection of mock vehicles
+ */
 export function buildMockVehicles(nowMs: number): VehicleFeatureCollection {
   const nowSeconds = Math.floor(nowMs / 1000);
   return {

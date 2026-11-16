@@ -294,6 +294,18 @@ async def get_active_stops():
     }
 
 
+# Within a minute of schedule either way counts as on time
+ON_TIME_WINDOW_SECONDS = 60
+
+
+def delay_status(delay_seconds: int) -> str:
+    if delay_seconds > ON_TIME_WINDOW_SECONDS:
+        return "LATE"
+    if delay_seconds < -ON_TIME_WINDOW_SECONDS:
+        return "EARLY"
+    return "ON_TIME"
+
+
 @app.get("/metrics/dashboard/{station_id}")
 async def get_dashboard_metrics(station_id: str):
     """
@@ -313,12 +325,6 @@ async def get_dashboard_metrics(station_id: str):
     )
     for est in estimates:
         delay_sec = est.get("delay_seconds", 0)
-        status = "ON_TIME"
-        if delay_sec > 60:
-            status = "LATE"
-        elif delay_sec < -60:
-            status = "EARLY"
-
         departures.append({
             "tripId": est.get("trip_id", ""),
             "routeId": est.get("route_id", "Transit"),
@@ -328,7 +334,7 @@ async def get_dashboard_metrics(station_id: str):
             "vehicleId": est.get("trip_id", "")[:8],
             "etaMinutes": max(0, round((est["arrival_time"] - now) / 60)),
             "delaySeconds": delay_sec,
-            "status": status,
+            "status": delay_status(delay_sec),
         })
 
     return {
@@ -351,34 +357,104 @@ async def get_dashboard_metrics(station_id: str):
         ],
     }
 
-async def get_active_vehicles(route_id: str | None = None):
-    "Retrive all active vehicles from the GTFS Realtime feed, including their current location and trip information."
-    feed = await get_feed("gtfsposition")
+def next_stop_update(trip_update, current_stop_sequence: int):
+    """The stop_time_update for the stop a vehicle is heading to (or stopped at).
 
-    vehicles = []
-    for entity in feed.entity:
+    Trip updates list the remaining stops in order, so that is the first one at
+    or after the vehicle's current stop sequence.
+    """
+    updates = trip_update.stop_time_update
+    for stu in updates:
+        if stu.stop_sequence >= current_stop_sequence:
+            return stu
+    return updates[-1] if updates else None
+
+
+def stop_update_delay(stu) -> int | None:
+    """Delay in seconds from a stop_time_update, or None if it doesn't report one."""
+    if stu.arrival.HasField("delay"):
+        return stu.arrival.delay
+    if stu.departure.HasField("delay"):
+        return stu.departure.delay
+    return None
+
+
+@app.get("/vehicles")
+async def get_vehicles(
+    route_id: str | None = Query(None, description='GTFS route_id (e.g. "6641" for the 99), not the public route number'),
+):
+    """
+    Every active vehicle as a GeoJSON FeatureCollection of Points.
+
+    Positions come from the gtfsposition feed. Delay comes from joining each
+    vehicle's trip against the trip-updates feed; names, colors and headsigns
+    come from the static GTFS data. A vehicle whose trip has no trip update
+    gets delaySeconds and status of null.
+    """
+    positions = await get_feed("gtfsposition")
+    trip_updates = await get_feed("gtfsrealtime")
+    static = get_static()
+
+    updates_by_trip = {
+        entity.trip_update.trip.trip_id: entity.trip_update
+        for entity in trip_updates.entity
+        if entity.HasField("trip_update")
+    }
+
+    features = []
+    for entity in positions.entity:
         if not entity.HasField("vehicle"):
             continue
         v = entity.vehicle
-        # Note: route_id here is TransLink's internal GTFS route_id (e.g. "30055"), notthe public route number
+        if not v.HasField("position"):
+            continue
         if route_id and v.trip.route_id != route_id:
             continue
-        vehicles.append({
-            "vehicle_id": v.vehicle.id,
-            "label": v.vehicle.label,
-            "trip_id": v.trip.trip_id,
-            "route_id": v.trip.route_id,
-            "direction_id": v.trip.direction_id,
-            "latitude": v.position.latitude,
-            "longitude": v.position.longitude,
-            "stop_id": v.stop_id,
-            "current_stop_sequence": v.current_stop_sequence,
-            "current_status": gtfs_realtime_pb2.VehiclePosition.VehicleStopStatus.Name(v.current_status),
-            "timestamp": v.timestamp,
+
+        trip_id = v.trip.trip_id
+        route = static.routes.get(v.trip.route_id)
+
+        delay_seconds = None
+        next_stop_id = v.stop_id or None
+        trip_update = updates_by_trip.get(trip_id)
+        if trip_update is not None:
+            stu = next_stop_update(trip_update, v.current_stop_sequence)
+            if stu is not None:
+                delay_seconds = stop_update_delay(stu)
+                next_stop_id = next_stop_id or stu.stop_id or None
+        next_stop = static.stops.get(next_stop_id) if next_stop_id else None
+
+        vehicle_id = v.vehicle.id or entity.id
+        features.append({
+            "type": "Feature",
+            "geometry": {
+                "type": "Point",
+                "coordinates": [round(v.position.longitude, 6), round(v.position.latitude, 6)],
+            },
+            "properties": {
+                "vehicleId": vehicle_id,
+                "label": v.vehicle.label or vehicle_id,
+                "routeId": v.trip.route_id,
+                "routeShortName": route["short_name"] if route else "",
+                "routeLongName": route["long_name"] if route else "",
+                "routeColor": route["color"] if route else None,
+                "routeTextColor": route["text_color"] if route else None,
+                "tripId": trip_id,
+                "headsign": static.trip_headsign(trip_id),
+                # TransLink's feed currently reports neither bearing nor speed
+                "bearing": v.position.bearing if v.position.HasField("bearing") else None,
+                "speed": v.position.speed if v.position.HasField("speed") else None,
+                "timestamp": v.timestamp or positions.header.timestamp,
+                "delaySeconds": delay_seconds,
+                "status": delay_status(delay_seconds) if delay_seconds is not None else None,
+                "nextStopId": next_stop_id,
+                "nextStopName": next_stop["name"] if next_stop else None,
+            },
         })
 
     return {
-        "feed_timestamp": feed.header.timestamp,
-        "vehicle_count": len(vehicles),
-        "vehicles": vehicles,
+        "type": "FeatureCollection",
+        "feedTimestamp": positions.header.timestamp,
+        "vehicleCount": len(features),
+        "features": features,
     }

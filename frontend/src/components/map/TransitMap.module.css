@@ -99,10 +99,17 @@
   .stopChip {
     top: 72px;
   }
+
+  /* the attribution opens as a two-line strip along the bottom edge; keep the legend clear of it */
+  .legend {
+    bottom: 68px;
+  }
 }
 
 .legendDot,
-.liveDot {
+.liveDot,
+.liveDotWarning,
+.liveDotError {
   display: inline-block;
   flex-shrink: 0;
   width: 8px;
@@ -113,6 +120,15 @@
 .liveDot {
   background-color: #34d399;
   animation: livePulse 2s ease-out infinite;
+}
+
+/* Stale or still-loading data: no pulse, so it doesn't read as live */
+.liveDotWarning {
+  background-color: #fbbf24;
+}
+
+.liveDotError {
+  background-color: #f87171;
 }
 
 @keyframes livePulse {
