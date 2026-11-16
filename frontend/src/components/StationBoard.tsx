@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   Card,
   Combobox,
@@ -21,6 +21,7 @@ import {
   IconClock,
   IconCheck,
   IconAlertTriangle,
+  IconCurrentLocation,
 } from '@tabler/icons-react';
 import { useDebouncedValue } from '@mantine/hooks';
 import {
@@ -28,6 +29,7 @@ import {
   POPULAR_STATIONS,
   type StopSearchResult,
 } from '../stores/useTransitStore';
+import { findVehicle, useMapStore } from '../stores/useMapStore';
 
 const isStopCode = (text: string) => /^\d+$/.test(text);
 
@@ -49,6 +51,16 @@ export function StationBoard() {
     searchStops,
     isLoading,
   } = useTransitStore();
+
+  // Departures whose vehicle is on the live map can be clicked to open it there
+  const vehicles = useMapStore((s) => s.vehicles);
+  const selectedVehicleId = useMapStore((s) => s.selectedVehicleId);
+  const focusVehicle = useMapStore((s) => s.focusVehicle);
+  const vehicleIdByTrip = useMemo(
+    () => new Map(vehicles.features.map((f) => [f.properties.tripId, f.properties.vehicleId])),
+    [vehicles],
+  );
+  const selectedTripOnMap = findVehicle(vehicles, selectedVehicleId)?.properties.tripId ?? null;
 
   // The box accepts either a stop code ("50915") or free text ("49th and fraser")
   const [query, setQuery] = useState(selectedStopId);
@@ -329,8 +341,30 @@ export function StationBoard() {
                     const isLate = dep.status === 'LATE';
                     const isEarly = dep.status === 'EARLY';
 
+                    const liveVehicleId = vehicleIdByTrip.get(dep.tripId);
+                    const showOnMap = liveVehicleId ? () => focusVehicle(liveVehicleId) : undefined;
+
                     return (
-                      <Table.Tr key={`${dep.tripId}-${idx}`}>
+                      <Table.Tr
+                        key={`${dep.tripId}-${idx}`}
+                        onClick={showOnMap}
+                        onKeyDown={
+                          showOnMap &&
+                          ((e) => {
+                            if (e.key === 'Enter' || e.key === ' ') {
+                              e.preventDefault();
+                              showOnMap();
+                            }
+                          })
+                        }
+                        tabIndex={showOnMap ? 0 : undefined}
+                        aria-label={showOnMap ? `Show trip ${dep.tripId} on the map` : undefined}
+                        title={showOnMap ? 'Show this vehicle on the map' : 'This vehicle is not on the live map right now'}
+                        style={{
+                          cursor: showOnMap ? 'pointer' : undefined,
+                          backgroundColor: dep.tripId === selectedTripOnMap ? 'rgba(34, 211, 238, 0.1)' : undefined,
+                        }}
+                      >
                         <Table.Td>
                           <Badge
                             size="md"
@@ -347,9 +381,12 @@ export function StationBoard() {
                           </Badge>
                         </Table.Td>
                         <Table.Td>
-                          <Text size="xs" ff="monospace" c="#94a3b8">
-                            {dep.tripId}
-                          </Text>
+                          <Group gap={6} wrap="nowrap">
+                            <Text size="xs" ff="monospace" c="#94a3b8">
+                              {dep.tripId}
+                            </Text>
+                            {showOnMap && <IconCurrentLocation size={13} color="#22d3ee" aria-hidden />}
+                          </Group>
                         </Table.Td>
                         <Table.Td>
                           <Text size="sm" c="#f1f5f9">
