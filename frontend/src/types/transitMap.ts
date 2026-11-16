@@ -34,12 +34,49 @@ export type VehicleFeatureCollection = FeatureCollection<Point, VehiclePropertie
 export type MapLayerKey = 'vehicles' | 'routes' | 'stops';
 export type LayerVisibility = Record<MapLayerKey, boolean>;
 
+/** The stop highlighted on the map, loaded from GET /stops/{stop_id} */
 export interface SelectedMapStop {
   stopId: string;
   stopCode: string | null;
   name: string;
   lat: number;
   lon: number;
+  /** Routes serving the stop; vehicles on these are emphasized */
+  routeIds: string[];
+}
+
+/** Progress of the stop the user picked: the chip shows it while loading and if it fails */
+export interface StopRequest {
+  /** What the user picked: a stop code or GTFS stop_id */
+  query: string;
+  /** Name to show until (or instead of) the backend's answer */
+  label: string;
+  status: 'loading' | 'ready' | 'error';
+}
+
+/** Properties of one stop returned by GET /stops */
+export interface StopProperties {
+  stopId: string;
+  stopCode: string | null;
+  name: string;
+}
+
+export type StopFeatureCollection = FeatureCollection<Point, StopProperties>;
+
+/** A lazily fetched map layer: nothing is requested until the layer is first needed */
+export interface LazyLayer<T> {
+  status: 'idle' | 'loading' | 'ready' | 'error';
+  data: T | null;
+}
+
+/** Where the map should fly to next. A new object is a new request, even for the same place. */
+export interface CameraTarget {
+  longitude: number;
+  latitude: number;
+  /** The map zooms in to at least this level; it never zooms out */
+  minZoom: number;
+  /** Also scroll the page so the map is on screen (the request came from elsewhere on the page) */
+  scrollIntoView: boolean;
 }
 
 /** Properties of one line returned by GET /routes/{route_id}/shape */

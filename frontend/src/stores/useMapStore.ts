@@ -1,13 +1,21 @@
 import { create } from 'zustand';
 import { buildMockVehicles } from '../components/map/mockVehicles';
-import { VEHICLE_REQUEST_TIMEOUT_MS } from '../components/map/mapConfig';
+import {
+  STOP_FOCUS_ZOOM,
+  VEHICLE_FOCUS_ZOOM,
+  VEHICLE_REQUEST_TIMEOUT_MS,
+} from '../components/map/mapConfig';
 import { useTransitStore } from './useTransitStore';
 import type {
+  CameraTarget,
   LayerVisibility,
+  LazyLayer,
   MapLayerKey,
   RouteShapeCollection,
   SelectedMapStop,
   ShownRoute,
+  StopFeatureCollection,
+  StopRequest,
   VehicleDataSource,
   VehicleFeature,
   VehicleFeatureCollection,
@@ -33,13 +41,29 @@ interface MapStore {
   vehiclesError: string | null;
 
   selectedVehicleId: string | null;
+  /** The stop highlighted on the map, once the backend has located it */
   selectedStop: SelectedMapStop | null;
+  /** The stop the user last picked, including while it loads or if it failed */
+  stopRequest: StopRequest | null;
+  /** Lines of every route serving the selected stop */
+  stopRoutes: RouteShapeCollection | null;
   layers: LayerVisibility;
   shownRoute: ShownRoute | null;
+  /** All stops, for the Stops layer (fetched the first time it is visible) */
+  allStops: LazyLayer<StopFeatureCollection>;
+  /** All route lines, for the Routes layer (fetched the first time it is switched on) */
+  routeNetwork: LazyLayer<RouteShapeCollection>;
+  cameraTarget: CameraTarget | null;
 
   fetchVehicles: () => Promise<void>;
   selectVehicle: (vehicleId: string | null) => void;
-  selectStop: (stop: SelectedMapStop | null) => void;
+  /** Select a vehicle from outside the map and bring it into view */
+  focusVehicle: (vehicleId: string) => void;
+  /** Highlight a stop (by stop code or stop_id): marker, its routes, and emphasis on their vehicles */
+  showStop: (query: string, label: string) => Promise<void>;
+  clearStop: () => void;
+  loadAllStops: () => Promise<void>;
+  loadRouteNetwork: () => Promise<void>;
   toggleLayer: (layer: MapLayerKey) => void;
   showRoute: (routeId: string) => Promise<void>;
   hideRoute: () => void;
@@ -73,6 +97,44 @@ async function fetchFeatureCollection(url: string): Promise<{ type: 'FeatureColl
   return body;
 }
 
+interface StopDetails {
+  stop_id: string;
+  stop_code: string;
+  stop_name: string;
+  lat: number;
+  lon: number;
+  routes: { route_id: string }[];
+}
+
+function isStopDetails(value: unknown): value is StopDetails {
+  if (typeof value !== 'object' || value === null) return false;
+  const stop = value as Partial<Record<keyof StopDetails, unknown>>;
+  return (
+    typeof stop.stop_id === 'string' &&
+    typeof stop.stop_name === 'string' &&
+    typeof stop.lat === 'number' &&
+    typeof stop.lon === 'number' &&
+    Array.isArray(stop.routes)
+  );
+}
+
+/** GET /stops/{stop}: accepts a public stop code or a GTFS stop_id */
+async function fetchStopDetails(backendUrl: string, stop: string): Promise<StopDetails> {
+  const response = await fetch(`${backendUrl}/stops/${encodeURIComponent(stop)}`, {
+    signal: AbortSignal.timeout(VEHICLE_REQUEST_TIMEOUT_MS),
+  });
+  if (!response.ok) throw new Error(`Backend returned ${response.status}`);
+  const body: unknown = await response.json();
+  if (!isStopDetails(body)) throw new Error('Unexpected response from backend');
+  return body;
+}
+
+function fetchRouteShape(backendUrl: string, routeId: string): Promise<RouteShapeCollection> {
+  return fetchFeatureCollection(
+    `${backendUrl}/routes/${encodeURIComponent(routeId)}/shape`,
+  ) as Promise<RouteShapeCollection>;
+}
+
 /**
  * Generates an error message based on the type of error.
  * @param error the error to generate a message for
@@ -101,9 +163,14 @@ export const useMapStore = create<MapStore>((set, get) => ({
 
   selectedVehicleId: null,
   selectedStop: null,
+  stopRequest: null,
+  stopRoutes: null,
   // Defaults match the mockup: Vehicles and Stops on, Routes off
   layers: { vehicles: true, routes: false, stops: true },
   shownRoute: null,
+  allStops: { status: 'idle', data: null },
+  routeNetwork: { status: 'idle', data: null },
+  cameraTarget: null,
 
   // Fetches the latest vehicle data from the backend or generates mock vehicles in demo mode.
   fetchVehicles: async () => {
@@ -158,7 +225,99 @@ export const useMapStore = create<MapStore>((set, get) => ({
       shownRoute: shownRoute && shownRoute.routeId === routeId ? shownRoute : null,
     });
   },
-  selectStop: (stop) => set({ selectedStop: stop }), // Selects a stop, updating the selected stop in the store.
+
+  focusVehicle: (vehicleId) => {
+    const vehicle = findVehicle(get().vehicles, vehicleId);
+    if (!vehicle) return;
+    get().selectVehicle(vehicleId);
+    const [longitude, latitude] = vehicle.geometry.coordinates;
+    set({
+      // A hidden vehicle can't be shown as selected
+      layers: { ...get().layers, vehicles: true },
+      cameraTarget: { longitude, latitude, minZoom: VEHICLE_FOCUS_ZOOM, scrollIntoView: true },
+    });
+  },
+
+  showStop: async (query, label) => {
+    const { backendUrl } = useTransitStore.getState();
+    set({
+      stopRequest: { query, label, status: 'loading' },
+      selectedStop: null,
+      stopRoutes: null,
+    });
+    // Ignore the answer if the user picked another stop or pressed Clear meanwhile
+    const stillWanted = () => {
+      const request = get().stopRequest;
+      return request !== null && request.query === query && request.status !== 'error';
+    };
+
+    try {
+      const details = await fetchStopDetails(backendUrl, query);
+      if (!stillWanted()) return;
+      const routeIds = details.routes.map((route) => route.route_id);
+      set({
+        stopRequest: { query, label: details.stop_name, status: 'ready' },
+        selectedStop: {
+          stopId: details.stop_id,
+          stopCode: details.stop_code || null,
+          name: details.stop_name,
+          lat: details.lat,
+          lon: details.lon,
+          routeIds,
+        },
+        cameraTarget: {
+          longitude: details.lon,
+          latitude: details.lat,
+          minZoom: STOP_FOCUS_ZOOM,
+          scrollIntoView: false,
+        },
+      });
+
+      // The marker and fly-to don't wait for the lines; a route whose shape fails is just left out
+      const shapes = await Promise.allSettled(
+        routeIds.map((routeId) => fetchRouteShape(backendUrl, routeId)),
+      );
+      if (!stillWanted() || get().selectedStop?.stopId !== details.stop_id) return;
+      set({
+        stopRoutes: {
+          type: 'FeatureCollection',
+          features: shapes.flatMap((result) =>
+            result.status === 'fulfilled' ? result.value.features : [],
+          ),
+        },
+      });
+    } catch {
+      if (!stillWanted()) return;
+      set({ stopRequest: { query, label, status: 'error' } });
+    }
+  },
+
+  clearStop: () => set({ stopRequest: null, selectedStop: null, stopRoutes: null }),
+
+  loadAllStops: async () => {
+    if (get().allStops.status === 'loading' || get().allStops.status === 'ready') return;
+    const { backendUrl } = useTransitStore.getState();
+    set({ allStops: { status: 'loading', data: null } });
+    try {
+      const collection = await fetchFeatureCollection(`${backendUrl}/stops`);
+      set({ allStops: { status: 'ready', data: collection as StopFeatureCollection } });
+    } catch {
+      set({ allStops: { status: 'error', data: null } });
+    }
+  },
+
+  loadRouteNetwork: async () => {
+    if (get().routeNetwork.status === 'loading' || get().routeNetwork.status === 'ready') return;
+    const { backendUrl } = useTransitStore.getState();
+    set({ routeNetwork: { status: 'loading', data: null } });
+    try {
+      const collection = await fetchFeatureCollection(`${backendUrl}/routes/shapes`);
+      set({ routeNetwork: { status: 'ready', data: collection as RouteShapeCollection } });
+    } catch {
+      set({ routeNetwork: { status: 'error', data: null } });
+    }
+  },
+
   toggleLayer: (layer) => // Toggles the visibility of a map layer (vehicles, routes, or stops) by updating the layers state.
     set((state) => ({ layers: { ...state.layers, [layer]: !state.layers[layer] } })),
 
@@ -169,12 +328,10 @@ export const useMapStore = create<MapStore>((set, get) => ({
     // Ignore the response if the user hid the route or asked for another one meanwhile
     const stillWanted = () => get().shownRoute?.routeId === routeId;
     try {
-      const collection = await fetchFeatureCollection(
-        `${backendUrl}/routes/${encodeURIComponent(routeId)}/shape`,
-      );
+      const shape = await fetchRouteShape(backendUrl, routeId);
       if (!stillWanted()) return;
-      if (collection.features.length === 0) throw new Error('No shape for this route');
-      set({ shownRoute: { routeId, status: 'ready', shape: collection as RouteShapeCollection } });
+      if (shape.features.length === 0) throw new Error('No shape for this route');
+      set({ shownRoute: { routeId, status: 'ready', shape } });
     } catch {
       if (!stillWanted()) return;
       set({ shownRoute: { routeId, status: 'error', shape: null } });
