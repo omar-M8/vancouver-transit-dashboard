@@ -128,6 +128,33 @@ def stop_payload(stop: dict) -> dict:
     }
 
 
+# GeoJSON built from the static data on first request and reused after that:
+# these payloads are ~1 MB each and never change while the server runs
+_static_geojson: dict[str, dict] = {}
+
+
+@app.get("/stops")
+async def list_stops():
+    """Every boardable stop as a GeoJSON FeatureCollection of Points (for the map's stops layer)."""
+    if "stops" not in _static_geojson:
+        _static_geojson["stops"] = {
+            "type": "FeatureCollection",
+            "features": [
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [stop["lon"], stop["lat"]]},
+                    "properties": {
+                        "stopId": stop["stop_id"],
+                        "stopCode": stop["stop_code"] or None,
+                        "name": stop["name"],
+                    },
+                }
+                for stop in get_static().stops.values()
+            ],
+        }
+    return _static_geojson["stops"]
+
+
 @app.get("/stops/search")
 async def search_stops(
     q: str = Query(..., min_length=1, max_length=100, description='Free text or a stop code, e.g. "49th and fraser" or "50915"'),
@@ -171,29 +198,50 @@ async def list_routes():
     return {"routes_found": len(routes), "routes": routes}
 
 
+def route_shape_features(static: StaticData, route_id: str) -> list[dict]:
+    """One GeoJSON LineString feature per distinct path of a route."""
+    route = static.routes[route_id]
+    return [
+        {
+            "type": "Feature",
+            "geometry": {"type": "LineString", "coordinates": static.shapes[shape_id]},
+            "properties": {
+                "routeId": route_id,
+                "shapeId": shape_id,
+                "routeShortName": route["short_name"],
+                "routeLongName": route["long_name"],
+                "routeColor": route["color"],
+            },
+        }
+        for shape_id in static.route_shape_ids.get(route_id, [])
+    ]
+
+
+@app.get("/routes/shapes")
+async def get_all_route_shapes():
+    """Every route's lines in one GeoJSON FeatureCollection (for the map's routes layer)."""
+    if "route_shapes" not in _static_geojson:
+        static = get_static()
+        _static_geojson["route_shapes"] = {
+            "type": "FeatureCollection",
+            "features": [
+                feature
+                for route_id in static.routes
+                for feature in route_shape_features(static, route_id)
+            ],
+        }
+    return _static_geojson["route_shapes"]
+
+
 @app.get("/routes/{route_id}/shape")
 async def get_route_shape(route_id: str):
     """GeoJSON FeatureCollection with one LineString per distinct path of the route."""
     static = get_static()
-    route = static.routes.get(route_id)
-    if route is None:
+    if route_id not in static.routes:
         raise HTTPException(status_code=404, detail=f"Unknown route: {route_id}")
     return {
         "type": "FeatureCollection",
-        "features": [
-            {
-                "type": "Feature",
-                "geometry": {"type": "LineString", "coordinates": static.shapes[shape_id]},
-                "properties": {
-                    "routeId": route_id,
-                    "shapeId": shape_id,
-                    "routeShortName": route["short_name"],
-                    "routeLongName": route["long_name"],
-                    "routeColor": route["color"],
-                },
-            }
-            for shape_id in static.route_shape_ids.get(route_id, [])
-        ],
+        "features": route_shape_features(static, route_id),
     }
 
 
