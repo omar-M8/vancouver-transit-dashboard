@@ -414,6 +414,60 @@ async def get_dashboard_metrics(station_id: str):
         ],
     }
 
+def translated_text(text) -> str:
+    """English text of a GTFS-RT TranslatedString (TransLink only publishes one language)."""
+    for translation in text.translation:
+        if translation.language in ("", "en"):
+            return translation.text.strip()
+    return text.translation[0].text.strip() if text.translation else ""
+
+
+@app.get("/alerts")
+async def get_alerts(
+    route_id: str | None = Query(None, description="Only alerts affecting this GTFS route_id"),
+):
+    """
+    Service alerts in effect right now, most severe first, from the gtfsalerts feed.
+
+    Each alert lists the routes and stops it affects. Alerts scheduled for the
+    future or already over are left out.
+    """
+    feed = await get_feed("gtfsalerts")
+    now = time.time()
+    Alert = gtfs_realtime_pb2.Alert
+
+    alerts = []
+    for entity in feed.entity:
+        if not entity.HasField("alert"):
+            continue
+        alert = entity.alert
+        # No active_period means "in effect for as long as it is in the feed"
+        periods = list(alert.active_period)
+        if periods and not any(
+            period.start <= now and (not period.end or period.end >= now) for period in periods
+        ):
+            continue
+
+        route_ids = list(dict.fromkeys(e.route_id for e in alert.informed_entity if e.route_id))
+        if route_id and route_id not in route_ids:
+            continue
+        alerts.append({
+            "id": entity.id,
+            "header": translated_text(alert.header_text),
+            "description": translated_text(alert.description_text),
+            "effect": Alert.Effect.Name(alert.effect),
+            "cause": Alert.Cause.Name(alert.cause),
+            "severity": Alert.SeverityLevel.Name(alert.severity_level),
+            "routeIds": route_ids,
+            "stopIds": list(dict.fromkeys(e.stop_id for e in alert.informed_entity if e.stop_id)),
+            "url": translated_text(alert.url) or None,
+            "_rank": alert.severity_level,
+        })
+
+    alerts.sort(key=lambda item: -item.pop("_rank"))
+    return {"alerts_found": len(alerts), "alerts": alerts}
+
+
 def next_stop_update(trip_update, current_stop_sequence: int):
     """The stop_time_update for the stop a vehicle is heading to (or stopped at).
 
