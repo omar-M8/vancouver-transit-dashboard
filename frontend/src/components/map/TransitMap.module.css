@@ -209,3 +209,9 @@
     animation: none;
   }
 }
+
+/* The panel takes focus when it opens (for screen readers); it isn't a control, so no focus ring */
+.detailsPanel:focus,
+.detailsSheet:focus {
+  outline: none;
+}

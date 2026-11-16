@@ -14,6 +14,7 @@ import MapGL, {
 import type {
   CircleLayerSpecification,
   ExpressionSpecification,
+  FilterSpecification,
   LineLayerSpecification,
 } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
@@ -37,17 +38,19 @@ import {
   STOPS_SOURCE_ID,
   VEHICLE_LAYER_ID,
   VEHICLE_SELECTED_LAYER_ID,
-  VEHICLE_SOURCE_ID,
 } from './map/mapConfig';
 import { LayerHint } from './map/LayerHint';
 import { LiveIndicator } from './map/LiveIndicator';
 import { MapLayerToggles } from './map/MapLayerToggles';
 import { MapLegend } from './map/MapLegend';
 import { MapControls } from './map/MapControls';
+import { RouteFilter } from './map/RouteFilter';
+import { VehicleLayers } from './map/VehicleLayers';
 import { SelectedStopChip } from './map/SelectedStopChip';
 import { VehicleDetailsPanel } from './map/VehicleDetailsPanel';
 import { destinationLabel, routeLabel } from './map/routeDisplay';
 import { useVehiclePolling } from '../hooks/useVehiclePolling';
+import { useServiceAlerts } from '../hooks/useServiceAlerts';
 import type {
   CameraTarget,
   RouteShapeCollection,
@@ -129,7 +132,8 @@ function vehiclePaint(emphasizedRouteIds: string[]): CircleLayer['paint'] {
     'circle-color': VEHICLE_COLOR_EXPRESSION,
     'circle-radius': ['interpolate', ['linear'], ['zoom'], 9, radius(2.5, 4), 12, radius(5, 7), 15, radius(8, 10.5)],
     'circle-stroke-color': '#0b1118',
-    'circle-stroke-width': 1.5,
+    // A thinner outline when zoomed out, so the small dots don't merge into dark blobs
+    'circle-stroke-width': ['interpolate', ['linear'], ['zoom'], 9, 0.5, 12, 1.5],
     'circle-opacity': opacity,
     'circle-stroke-opacity': opacity,
   };
@@ -211,8 +215,14 @@ const routeLineLayer: LineLayer = {
  * 
  * @returns a JSX element representing the transit map
  */
+/** Layer filter that keeps only the chosen routes; with nothing chosen it keeps everything */
+function routeFilterExpression(routeIds: string[]): FilterSpecification {
+  return routeIds.length > 0 ? ['in', ['get', 'routeId'], ['literal', routeIds]] : ['all'];
+}
+
 export function TransitMap() {
   useVehiclePolling();
+  useServiceAlerts();
   const mapRef = useRef<MapRef>(null);
   const frameRef = useRef<HTMLDivElement>(null);
   // Read synchronously on first render: MapLibre only reads attributionControl when the map is created
@@ -228,6 +238,7 @@ export function TransitMap() {
   const allStops = useMapStore((s) => s.allStops);
   const routeNetwork = useMapStore((s) => s.routeNetwork);
   const cameraTarget = useMapStore((s) => s.cameraTarget);
+  const routeFilter = useMapStore((s) => s.routeFilter);
   const showStop = useMapStore((s) => s.showStop);
   const loadAllStops = useMapStore((s) => s.loadAllStops);
   const loadRouteNetwork = useMapStore((s) => s.loadRouteNetwork);
@@ -269,6 +280,10 @@ export function TransitMap() {
   }, [cameraTarget, applyCameraTarget]);
   // A request made before the map finished loading is applied once it has
   const handleLoad = useCallback(() => {
+    // MapLibre's own keyboard handler pans with the arrow keys and zooms with + and -
+    mapRef.current
+      ?.getCanvas()
+      .setAttribute('aria-label', 'Live transit map. Arrow keys pan, plus and minus zoom.');
     const pending = useMapStore.getState().cameraTarget;
     if (pending) applyCameraTarget(pending);
   }, [applyCameraTarget]);
@@ -301,8 +316,17 @@ export function TransitMap() {
 
   const stopRouteIds = selectedStop?.routeIds;
   const vehicleCircleLayer = useMemo<CircleLayer>(
-    () => ({ id: VEHICLE_LAYER_ID, type: 'circle', paint: vehiclePaint(stopRouteIds ?? []) }),
-    [stopRouteIds],
+    () => ({
+      id: VEHICLE_LAYER_ID,
+      type: 'circle',
+      filter: routeFilterExpression(routeFilter),
+      paint: vehiclePaint(stopRouteIds ?? []),
+    }),
+    [stopRouteIds, routeFilter],
+  );
+  const networkLayer = useMemo<LineLayer>(
+    () => ({ ...networkLineLayer, filter: routeFilterExpression(routeFilter) }),
+    [routeFilter],
   );
 
   // The selected vehicle is drawn as a ring around the vehicle circle. This layer is only visible when a vehicle is selected.
@@ -336,7 +360,6 @@ export function TransitMap() {
   );
 
   // Layers stay mounted and are hidden with `visibility`, which keeps their order on the map fixed
-  const vehicleVisibility = layers.vehicles ? 'visible' : 'none';
   const stopsVisibility = layers.stops ? 'visible' : 'none';
   const networkVisibility = layers.routes ? 'visible' : 'none';
 
@@ -349,9 +372,12 @@ export function TransitMap() {
             Live transit map
           </Text>
         </Group>
-        <Text size="xs" c="dimmed">
-          Vancouver · Burnaby · Richmond
-        </Text>
+        <Group gap="sm" wrap="wrap" justify="flex-end" style={{ flexGrow: 1 }}>
+          <Text size="xs" c="dimmed">
+            Vancouver · Burnaby · Richmond
+          </Text>
+          <RouteFilter />
+        </Group>
       </Group>
 
       <Box ref={frameRef} className={classes.mapFrame} h={{ base: 400, md: 560 }}>
@@ -372,7 +398,7 @@ export function TransitMap() {
           {/* Sources are always mounted (empty until needed) so the draw order never changes:
               network, highlighted routes, stops, then vehicles on top */}
           <Source id={NETWORK_SOURCE_ID} type="geojson" data={routeNetwork.data ?? EMPTY_ROUTE}>
-            <Layer {...networkLineLayer} layout={{ ...ROUTE_LINE_LAYOUT, visibility: networkVisibility }} />
+            <Layer {...networkLayer} layout={{ ...ROUTE_LINE_LAYOUT, visibility: networkVisibility }} />
           </Source>
 
           <Source id={ROUTE_SOURCE_ID} type="geojson" data={highlightedRoutes}>
@@ -384,11 +410,12 @@ export function TransitMap() {
             <Layer {...stopsLayer} layout={{ visibility: stopsVisibility }} />
           </Source>
 
-          {/* One GeoJSON source for the whole fleet; updating `data` calls setData() under the hood */}
-          <Source id={VEHICLE_SOURCE_ID} type="geojson" data={vehicles} promoteId="vehicleId">
-            <Layer {...vehicleCircleLayer} layout={{ visibility: vehicleVisibility }} />
-            <Layer {...selectedRingLayer} layout={{ visibility: vehicleVisibility }} />
-          </Source>
+          <VehicleLayers
+            vehicles={vehicles}
+            circleLayer={vehicleCircleLayer}
+            selectedRingLayer={selectedRingLayer}
+            visible={layers.vehicles}
+          />
 
           {/* Only ever one of these, so a regular Marker is fine */}
           {selectedStop && (

@@ -13,6 +13,12 @@ export const INITIAL_VIEW_STATE = {
 /** Matches the backend's 30s GTFS-RT cache */
 export const VEHICLE_POLL_INTERVAL_MS = 30_000;
 export const VEHICLE_REQUEST_TIMEOUT_MS = 15_000;
+/** How long a vehicle takes to glide from its old position to a new one */
+export const VEHICLE_ANIMATION_MS = 2_000;
+/** A bigger jump than this (~1.5 km) between two polls is not one vehicle driving; snap instead of gliding */
+export const VEHICLE_MAX_GLIDE_DEGREES = 0.02;
+/** Service alerts change slowly */
+export const ALERTS_POLL_INTERVAL_MS = 5 * 60_000;
 
 /** Used for the route badge and line when TransLink gives the route no color */
 export const DEFAULT_ROUTE_COLOR = '#0b5fad';

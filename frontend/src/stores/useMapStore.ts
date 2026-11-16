@@ -12,7 +12,9 @@ import type {
   LazyLayer,
   MapLayerKey,
   RouteShapeCollection,
+  RouteSummary,
   SelectedMapStop,
+  ServiceAlert,
   ShownRoute,
   StopFeatureCollection,
   StopRequest,
@@ -54,7 +56,16 @@ interface MapStore {
   /** All route lines, for the Routes layer (fetched the first time it is switched on) */
   routeNetwork: LazyLayer<RouteShapeCollection>;
   cameraTarget: CameraTarget | null;
+  /** Every route, for the route filter's options */
+  routes: LazyLayer<RouteSummary[]>;
+  /** Route ids to show; empty means no filter */
+  routeFilter: string[];
+  /** Service alerts in effect now; empty until loaded, in demo mode, or if the request fails */
+  alerts: ServiceAlert[];
 
+  loadRoutes: () => Promise<void>;
+  setRouteFilter: (routeIds: string[]) => void;
+  loadAlerts: () => Promise<void>;
   fetchVehicles: () => Promise<void>;
   selectVehicle: (vehicleId: string | null) => void;
   /** Select a vehicle from outside the map and bring it into view */
@@ -129,6 +140,49 @@ async function fetchStopDetails(backendUrl: string, stop: string): Promise<StopD
   return body;
 }
 
+/** GET a JSON object and return the array under `key`, or throw if it isn't there */
+async function fetchList(url: string, key: string): Promise<unknown[]> {
+  const response = await fetch(url, { signal: AbortSignal.timeout(VEHICLE_REQUEST_TIMEOUT_MS) });
+  if (!response.ok) throw new Error(`Backend returned ${response.status}`);
+  const body: unknown = await response.json();
+  const list = typeof body === 'object' && body !== null ? (body as Record<string, unknown>)[key] : null;
+  if (!Array.isArray(list)) throw new Error('Unexpected response from backend');
+  return list;
+}
+
+const asString = (value: unknown): string => (typeof value === 'string' ? value : '');
+const asStringList = (value: unknown): string[] =>
+  Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : [];
+
+function toRouteSummary(item: unknown): RouteSummary | null {
+  if (typeof item !== 'object' || item === null) return null;
+  const route = item as Record<string, unknown>;
+  if (typeof route.route_id !== 'string') return null;
+  return {
+    routeId: route.route_id,
+    shortName: asString(route.short_name),
+    longName: asString(route.long_name),
+    color: typeof route.color === 'string' ? route.color : null,
+  };
+}
+
+function toServiceAlert(item: unknown): ServiceAlert | null {
+  if (typeof item !== 'object' || item === null) return null;
+  const alert = item as Record<string, unknown>;
+  if (typeof alert.id !== 'string' || typeof alert.header !== 'string') return null;
+  return {
+    id: alert.id,
+    header: alert.header,
+    description: asString(alert.description),
+    effect: asString(alert.effect),
+    cause: asString(alert.cause),
+    severity: asString(alert.severity),
+    routeIds: asStringList(alert.routeIds),
+    stopIds: asStringList(alert.stopIds),
+    url: typeof alert.url === 'string' ? alert.url : null,
+  };
+}
+
 function fetchRouteShape(backendUrl: string, routeId: string): Promise<RouteShapeCollection> {
   return fetchFeatureCollection(
     `${backendUrl}/routes/${encodeURIComponent(routeId)}/shape`,
@@ -171,6 +225,46 @@ export const useMapStore = create<MapStore>((set, get) => ({
   allStops: { status: 'idle', data: null },
   routeNetwork: { status: 'idle', data: null },
   cameraTarget: null,
+  routes: { status: 'idle', data: null },
+  routeFilter: [],
+  alerts: [],
+
+  loadRoutes: async () => {
+    if (get().routes.status === 'loading' || get().routes.status === 'ready') return;
+    const { backendUrl } = useTransitStore.getState();
+    set({ routes: { status: 'loading', data: null } });
+    try {
+      const list = await fetchList(`${backendUrl}/routes`, 'routes');
+      const routes = list.map(toRouteSummary).filter((route): route is RouteSummary => route !== null);
+      set({ routes: { status: 'ready', data: routes } });
+    } catch {
+      set({ routes: { status: 'error', data: null } });
+    }
+  },
+
+  setRouteFilter: (routeIds) => {
+    const { vehicles, selectedVehicleId } = get();
+    set({ routeFilter: routeIds });
+    // A vehicle the filter just hid can't stay selected
+    const selectedRoute = findVehicle(vehicles, selectedVehicleId)?.properties.routeId;
+    if (routeIds.length > 0 && selectedRoute && !routeIds.includes(selectedRoute)) {
+      get().selectVehicle(null);
+    }
+  },
+
+  loadAlerts: async () => {
+    const { isDemoMode, backendUrl } = useTransitStore.getState();
+    if (isDemoMode) {
+      set({ alerts: [] });
+      return;
+    }
+    try {
+      const list = await fetchList(`${backendUrl}/alerts`, 'alerts');
+      set({ alerts: list.map(toServiceAlert).filter((alert): alert is ServiceAlert => alert !== null) });
+    } catch {
+      // Alerts are an extra; the map works without them, and the last good list stays
+    }
+  },
 
   // Fetches the latest vehicle data from the backend or generates mock vehicles in demo mode.
   fetchVehicles: async () => {

@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { Badge, Box, Button, CloseButton, Group, SimpleGrid, Stack, Text } from '@mantine/core';
 import { IconArrowRight, IconRoute } from '@tabler/icons-react';
 import { findVehicle, useMapStore } from '../../stores/useMapStore';
@@ -6,6 +6,7 @@ import { formatAgo, useNow } from '../../hooks/useNow';
 import { DELAY_CATEGORIES, formatDelay, getDelayCategory } from './delayStatus';
 import { DEFAULT_ROUTE_COLOR, DEFAULT_ROUTE_TEXT_COLOR } from './mapConfig';
 import { destinationLabel, routeLabel } from './routeDisplay';
+import { RouteAlerts } from './RouteAlerts';
 import classes from './TransitMap.module.css';
 
 /**
@@ -25,13 +26,14 @@ interface VehicleDetailsPanelProps {
  * @param value the value to display 
  * @returns a JSX element representing the row
  */
+/** One label/value pair of the details list (a <dt>/<dd> pair, so screen readers announce them together) */
 function DetailRow({ label, value }: { label: string; value: string }) {
   return (
     <>
-      <Text size="xs" c="dimmed">
+      <Text component="dt" size="xs" c="dimmed">
         {label}
       </Text>
-      <Text size="xs" c="#f1f5f9" fw={500}>
+      <Text component="dd" size="xs" c="#f1f5f9" fw={500} m={0}>
         {value}
       </Text>
     </>
@@ -65,6 +67,23 @@ export function VehicleDetailsPanel({ isMobile }: VehicleDetailsPanelProps) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [selectedVehicleId, selectVehicle]);
 
+  // Opening the panel moves keyboard focus into it, so screen-reader and keyboard users land on
+  // the details; closing it hands focus back to whatever opened it (the map or a departures row)
+  const panelRef = useRef<HTMLElement>(null);
+  const openVehicleId = vehicle?.properties.vehicleId ?? null;
+  useEffect(() => {
+    const panel = panelRef.current;
+    if (!openVehicleId || !panel) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    if (!panel.contains(opener)) panel.focus({ preventScroll: true });
+    return () => {
+      // Runs after the panel is gone or showing another vehicle; only restore on a real close
+      if (!panel.isConnected && opener?.isConnected && !panel.contains(opener)) {
+        opener.focus({ preventScroll: true });
+      }
+    };
+  }, [openVehicleId]);
+
   // If no vehicle is selected, render nothing
   if (!vehicle) return null;
 
@@ -78,6 +97,8 @@ export function VehicleDetailsPanel({ isMobile }: VehicleDetailsPanelProps) {
 
   return (
     <section
+      ref={panelRef}
+      tabIndex={-1}
       className={`${classes.overlay} ${isMobile ? classes.detailsSheet : classes.detailsPanel}`}
       aria-label={`Vehicle details: route ${route} to ${destination}`}
     >
@@ -131,16 +152,18 @@ export function VehicleDetailsPanel({ isMobile }: VehicleDetailsPanelProps) {
           {formatDelay(p.delaySeconds)}
         </Badge>
 
-        <SimpleGrid cols={2} spacing={8} verticalSpacing={6} style={{ gridTemplateColumns: 'auto 1fr' }}>
+        <SimpleGrid component="dl" cols={2} spacing={8} verticalSpacing={6} m={0} style={{ gridTemplateColumns: 'auto 1fr' }}>
           <DetailRow label="Next stop" value={p.nextStopName ?? 'Unknown'} />
           <DetailRow label="Vehicle" value={p.label ? `#${p.label}` : p.vehicleId} />
           {p.speed !== null && <DetailRow label="Speed" value={`${Math.round(p.speed * 3.6)} km/h`} />}
           <DetailRow label="Updated" value={formatAgo(now - p.timestamp * 1000)} />
         </SimpleGrid>
 
-        <Text size="10px" c="dimmed" ff="monospace">
+        <Text size="10px" c="dimmed" ff="monospace" aria-label={`Position ${lat.toFixed(5)}, ${lon.toFixed(5)}`}>
           {lat.toFixed(5)}, {lon.toFixed(5)}
         </Text>
+
+        <RouteAlerts key={p.routeId} routeId={p.routeId} />
 
         <Button
           size="xs"

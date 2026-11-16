@@ -22,14 +22,21 @@ import classes from './TransitMap.module.css';
  * role="status" so that screen readers know this is a status message
 */
 export function LiveIndicator() {
-  const count = useMapStore((s) => s.vehicles.features.length);
+  const total = useMapStore((s) => s.vehicles.features.length);
+  // With a route filter on, count only the vehicles it leaves on the map
+  const count = useMapStore((s) =>
+    s.routeFilter.length === 0
+      ? s.vehicles.features.length
+      : s.vehicles.features.filter((f) => s.routeFilter.includes(f.properties.routeId)).length,
+  );
   const source = useMapStore((s) => s.vehicleSource);
   const updatedAt = useMapStore((s) => s.vehiclesUpdatedAt);
   const error = useMapStore((s) => s.vehiclesError);
   // Ticks every second; only this small component re-renders
   const now = useNow(1000);
 
-  const vehicleCount = `${count} vehicle${count === 1 ? '' : 's'}`;
+  const vehicleCount =
+    count === total ? `${total} vehicle${total === 1 ? '' : 's'}` : `${count} of ${total} vehicles`;
   const updated = updatedAt === null ? null : `updated ${formatAgo(now - updatedAt)}`; // difference in ms, formatAgo expects ms
 
   let dotClass = classes.liveDot;
