@@ -40,6 +40,14 @@
   max-width: calc(100% - 84px);
 }
 
+/* One-line note under the toggles, e.g. "Zoom in to see stops" */
+.layerHint {
+  top: 56px;
+  right: 12px;
+  padding: 4px 10px;
+  pointer-events: none;
+}
+
 .controls {
   right: 12px;
   /* sits above the attribution */
@@ -98,6 +106,11 @@
 
   .stopChip {
     top: 72px;
+  }
+
+  /* below the stop chip, which takes the row under the toggles here */
+  .layerHint {
+    top: 108px;
   }
 
   /* the attribution opens as a two-line strip along the bottom edge; keep the legend clear of it */
@@ -165,4 +178,34 @@
 
 .vehiclePopup:global(.maplibregl-popup-anchor-bottom) :global(.maplibregl-popup-tip) {
   border-top-color: rgba(13, 20, 30, 0.95);
+}
+
+/* Highlighted stop: a cyan pin head with a slow pulse so it stands out from the vehicle dots */
+.stopMarker {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background-color: #22d3ee;
+  border: 3px solid #0b1118;
+  box-shadow: 0 0 0 2px #22d3ee;
+  animation: stopPulse 2s ease-out infinite;
+  pointer-events: none;
+}
+
+@keyframes stopPulse {
+  0% {
+    box-shadow: 0 0 0 2px #22d3ee, 0 0 0 2px rgba(34, 211, 238, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 2px #22d3ee, 0 0 0 14px rgba(34, 211, 238, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 2px #22d3ee, 0 0 0 2px rgba(34, 211, 238, 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .stopMarker {
+    animation: none;
+  }
 }
