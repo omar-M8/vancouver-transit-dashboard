@@ -20,7 +20,22 @@ export const DEFAULT_ROUTE_TEXT_COLOR = '#ffffff';
 /** Uncolored routes are drawn in the map's cyan accent so the line stands out on the dark base map */
 export const DEFAULT_ROUTE_LINE_COLOR = '#22d3ee';
 
+/** Routes layer backdrop: uncolored routes in a neutral slate so highlighted lines stand out */
+export const NETWORK_ROUTE_LINE_COLOR = '#64748b';
+
+/** Stops are too dense to show below this zoom */
+export const STOPS_MIN_ZOOM = 14;
+export const STOP_FOCUS_ZOOM = 15;
+/** Zoom used when jumping to a vehicle from the departures board */
+export const VEHICLE_FOCUS_ZOOM = 14;
+/** Opacity of vehicles that don't serve the selected stop */
+export const FADED_VEHICLE_OPACITY = 0.25;
+
 /** String IDs for map layers and sources */
+export const NETWORK_SOURCE_ID = 'route-network';
+export const NETWORK_LINE_LAYER_ID = 'route-network-line';
+export const STOPS_SOURCE_ID = 'stops';
+export const STOPS_LAYER_ID = 'stops-circle';
 export const ROUTE_SOURCE_ID = 'shown-route';
 export const ROUTE_CASING_LAYER_ID = 'shown-route-casing';
 export const ROUTE_LINE_LAYER_ID = 'shown-route-line';
