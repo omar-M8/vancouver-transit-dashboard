@@ -1,32 +1,29 @@
-import type { Feature, FeatureCollection, Point } from 'geojson';
+import type { Feature, FeatureCollection, LineString, Point } from 'geojson';
 
 /** Same three values the existing departures board uses */
 export type VehicleStatus = 'ON_TIME' | 'LATE' | 'EARLY';
 
-/**
- * Properties of one live vehicle. This mirrors what GET /vehicles will return
- * in Phase 3 (as a GeoJSON FeatureCollection), so the map code won't change
- * when the mock data is swapped for the real endpoint.
- */
+/** Properties of one live vehicle, as returned by GET /vehicles (a GeoJSON FeatureCollection). */
 export interface VehicleProperties {
   vehicleId: string;
   label: string;
   routeId: string;
   routeShortName: string;
   routeLongName: string;
-  /** Hex color including the leading "#" */
-  routeColor: string;
-  routeTextColor: string;
+  /** Hex color including the leading "#". Null for most routes: TransLink only colors rail, RapidBus and the 99. */
+  routeColor: string | null;
+  routeTextColor: string | null;
   tripId: string;
-  headsign: string;
+  headsign: string | null;
   /** Degrees clockwise from north, if the feed reports it */
   bearing: number | null;
   /** Metres per second (GTFS-RT unit), if the feed reports it */
   speed: number | null;
   /** Unix epoch seconds of the position fix */
   timestamp: number;
-  delaySeconds: number;
-  status: VehicleStatus;
+  /** Null when the vehicle's trip has no realtime trip update to take a delay from */
+  delaySeconds: number | null;
+  status: VehicleStatus | null;
   nextStopId: string | null;
   nextStopName: string | null;
 }
@@ -43,6 +40,24 @@ export interface SelectedMapStop {
   name: string;
   lat: number;
   lon: number;
+}
+
+/** Properties of one line returned by GET /routes/{route_id}/shape */
+export interface RouteShapeProperties {
+  routeId: string;
+  shapeId: string;
+  routeShortName: string;
+  routeLongName: string;
+  routeColor: string | null;
+}
+
+export type RouteShapeCollection = FeatureCollection<LineString, RouteShapeProperties>;
+
+/** The route currently drawn on the map by "Show route" */
+export interface ShownRoute {
+  routeId: string;
+  status: 'loading' | 'ready' | 'error';
+  shape: RouteShapeCollection | null;
 }
 
 /** Where the vehicles on the map came from */
