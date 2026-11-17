@@ -165,7 +165,11 @@ export const useTransitStore = create<TransitStore>((set, get) => ({
   selectedTripId: null,
   leaderboard: [],
 
-  backendUrl: 'http://localhost:8000',
+  // Dev talks to a local uvicorn; production is same-origin behind Vercel's /api rewrite.
+  backendUrl: (
+    import.meta.env.VITE_API_URL
+    ?? (import.meta.env.DEV ? 'http://localhost:8000' : '/api')
+  ).replace(/\/$/, ''),
   isConnected: false,
   isDemoMode: false,
   isLoading: false,
