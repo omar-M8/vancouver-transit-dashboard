@@ -171,10 +171,14 @@ export function Header({ autoRefresh, setAutoRefresh }: HeaderProps) {
       >
         <TextInput
           label="Backend API Base URL"
-          description="Default is http://localhost:8000"
+          description={
+            import.meta.env.DEV
+              ? 'Default in development is http://localhost:8000'
+              : 'Default is /api (this site\'s own backend). http://localhost:8000 only applies in development.'
+          }
           value={urlInput}
           onChange={(e) => setUrlInput(e.target.value)}
-          placeholder="http://localhost:8000"
+          placeholder={import.meta.env.DEV ? 'http://localhost:8000' : '/api'}
           mb="md"
         />
         <Group justify="flex-end">

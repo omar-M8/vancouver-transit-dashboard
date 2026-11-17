@@ -74,11 +74,14 @@ export default function App() {
               <Group justify="space-between" align="center" wrap="wrap">
                 <div>
                   <Text size="sm">
-                    Unable to reach the backend at <code>{backendUrl}</code>. Run the following command in your terminal to start it:
+                    Unable to reach the backend at <code>{backendUrl}</code>.
+                    {import.meta.env.DEV && ' Run the following command in your terminal to start it:'}
                   </Text>
-                  <Text size="xs" ff="monospace" mt={4} fw={700}>
-                    backend/venv/bin/uvicorn backend.main:app --port 8000 --reload
-                  </Text>
+                  {import.meta.env.DEV && (
+                    <Text size="xs" ff="monospace" mt={4} fw={700}>
+                      backend/venv/bin/uvicorn backend.main:app --port 8000 --reload
+                    </Text>
+                  )}
                 </div>
                 <Group gap="xs">
                   <Button

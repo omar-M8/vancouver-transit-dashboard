@@ -3,7 +3,8 @@
 The realtime feeds only carry ids. Stop names and coordinates, route names and
 colors, trip headsigns and route shapes all come from the static schedule,
 which TransLink republishes weekly. This script downloads the zip and writes
-the files the API loads at startup into backend/data/ (git-ignored):
+the files the API loads at startup into backend/data/ (committed to the repo
+so the Vercel deployment has them):
 
   stops.json        [{stop_id, stop_code, name, lat, lon}]   boardable stops only
   routes.json       [{route_id, short_name, long_name, color, text_color, route_type}]
@@ -18,7 +19,8 @@ Run it from anywhere, about once a week:
     python backend/scripts/build_static_data.py
     python backend/scripts/build_static_data.py --zip path/to/google_transit.zip
 
-The API also runs it on startup when the files are missing.
+Commit backend/data/ after a refresh. Locally the API also runs this on startup
+when the files are missing; on Vercel missing files are an error.
 """
 
 import argparse
