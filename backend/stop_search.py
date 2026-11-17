@@ -16,6 +16,10 @@ Each remaining query word matches a stop-name word that is:
   * a prefix of it, for words of 3+ letters    (score 90, "fras" -> "fraser")
   * a close typo, for words of 4+ letters      (score <= 85, "frasr" -> "fraser")
 Numbers only ever match exactly, so "49" never matches "48" or "490".
+
+A query that is only digits is also tried as a stop code (the number on the
+sign): an exact code is listed first, and from 3 digits on, codes starting
+with the query fill whatever room the name matches leave.
 """
 
 import re
@@ -52,6 +56,7 @@ MIN_PREFIX_LEN = 3
 MIN_FUZZY_LEN = 4
 FUZZY_CUTOFF = 80  # rapidfuzz ratio, 0-100
 FUZZY_WEIGHT = 0.85  # keeps a typo match below an exact or prefix match
+MIN_CODE_PREFIX_LEN = 3  # "49" is a street number; "508" is the start of a stop code
 
 
 def normalize(text: str) -> list[str]:
@@ -80,6 +85,11 @@ def split_direction(stop_name: str) -> tuple[str, str | None]:
 
 @dataclass
 class StopSearchIndex:
+    """In-memory search over stop names and codes, built once at startup.
+
+    An inverted index (word -> stops) makes each query a few set intersections
+    instead of a scan of every stop name.
+    """
     stops: list[dict] = field(default_factory=list)
     # word -> indices into self.stops whose name contains that word
     postings: dict[str, set[int]] = field(default_factory=dict)
@@ -87,10 +97,13 @@ class StopSearchIndex:
     vocabulary: list[str] = field(default_factory=list)
     # normalized words of each stop name, parallel to self.stops
     stop_words: list[set[str]] = field(default_factory=list)
+    # stop_code -> index into self.stops
+    codes: dict[str, int] = field(default_factory=dict)
 
     @classmethod
     def build(cls, stops: list[dict]) -> "StopSearchIndex":
-        """`stops` items need "stop_id", "stop_code" and "stop_name" keys."""
+        """`stops` items need "stop_id", "stop_code" and "stop_name" keys;
+        "lat" and "lon" are passed through when present."""
         index = cls()
         for stop in stops:
             place, direction = split_direction(stop["stop_name"])
@@ -101,7 +114,11 @@ class StopSearchIndex:
                 "stop_name": stop["stop_name"],
                 "direction": direction,
                 "label": f"{place}, {direction}" if direction else place,
+                "lat": stop.get("lat"),
+                "lon": stop.get("lon"),
             })
+            if stop["stop_code"]:
+                index.codes[stop["stop_code"]] = position
             words = set(normalize(stop["stop_name"]))
             index.stop_words.append(words)
             for word in words:
@@ -136,7 +153,34 @@ class StopSearchIndex:
         return matches
 
     def search(self, query: str, limit: int = 20) -> tuple[list[str], list[dict]]:
-        """Return (search terms, matching stops ranked best first)."""
+        """Return (search terms, matching stops ranked best first), by name or stop code."""
+        terms, by_name = self._search_names(query, limit)
+
+        code = query.strip()
+        if not code.isdigit():
+            return terms, by_name
+
+        exact: list[dict] = []
+        if code in self.codes:
+            exact.append({**self.stops[self.codes[code]], "score": float(EXACT_SCORE)})
+        prefixed: list[dict] = []
+        if len(code) >= MIN_CODE_PREFIX_LEN:
+            prefixed = [
+                {**self.stops[position], "score": float(PREFIX_SCORE)}
+                for stop_code, position in sorted(self.codes.items())
+                if stop_code != code and stop_code.startswith(code)
+            ]
+
+        results: list[dict] = []
+        seen: set[str] = set()
+        for stop in [*exact, *by_name, *prefixed]:
+            if stop["stop_id"] not in seen:
+                seen.add(stop["stop_id"])
+                results.append(stop)
+        return terms, results[:limit]
+
+    def _search_names(self, query: str, limit: int) -> tuple[list[str], list[dict]]:
+        """Name-only search: every query word must match a word in the stop name; results ranked by match score."""
         terms = list(dict.fromkeys(normalize(query)))  # dedupe, keep order
         if not terms:
             return terms, []

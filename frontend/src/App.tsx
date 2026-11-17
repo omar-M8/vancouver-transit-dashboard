@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { lazy, Suspense, useEffect, useState } from 'react';
 import {
   Container,
   Stack,
@@ -9,6 +9,7 @@ import {
   Text,
   Badge,
   Box,
+  Skeleton,
 } from '@mantine/core';
 import {
   IconAlertCircle,
@@ -22,6 +23,11 @@ import { StationBoard } from './components/StationBoard';
 import { Leaderboard } from './components/Leaderboard';
 import { BackendExplorer } from './components/BackendExplorer';
 import { useTransitStore } from './stores/useTransitStore';
+
+// MapLibre is large (~1 MB), so the map loads in its own chunk instead of the main bundle
+const TransitMap = lazy(() =>
+  import('./components/TransitMap').then((m) => ({ default: m.TransitMap })),
+);
 
 export default function App() {
   const {
@@ -129,7 +135,12 @@ export default function App() {
                 {/* 2. Station Arrivals Board */}
                 <StationBoard />
 
-                {/* 3. Reliability Leaderboard */}
+                {/* 3. Live Transit Map */}
+                <Suspense fallback={<Skeleton h={{ base: 460, md: 620 }} radius="md" />}>
+                  <TransitMap />
+                </Suspense>
+
+                {/* 4. Reliability Leaderboard */}
                 <Leaderboard />
               </Stack>
             </Tabs.Panel>

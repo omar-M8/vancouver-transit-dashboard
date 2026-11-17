@@ -133,6 +133,8 @@ interface TransitStore {
   systemMetrics: SystemMetrics | null;
   selectedStopId: string;
   selectedStopName: string;
+  /** Counts user stop selections (0 = still on the default stop), so the map can react to each one, including re-picking the same stop */
+  stopSelectionCount: number;
   departures: Departure[];
   selectedTripId: string | null;
   leaderboard: LeaderboardItem[];
@@ -158,6 +160,7 @@ export const useTransitStore = create<TransitStore>((set, get) => ({
   systemMetrics: null,
   selectedStopId: '50915',
   selectedStopName: 'Broadway & Cambie',
+  stopSelectionCount: 0,
   departures: [],
   selectedTripId: null,
   leaderboard: [],
@@ -177,7 +180,12 @@ export const useTransitStore = create<TransitStore>((set, get) => ({
   setSelectedStop: (stopId: string, stopName?: string) => {
     const matchedPreset = POPULAR_STATIONS.find((s) => s.id === stopId);
     const finalName = stopName || matchedPreset?.name || `Stop #${stopId}`;
-    set({ selectedStopId: stopId, selectedStopName: finalName, selectedTripId: null });
+    set((state) => ({
+      selectedStopId: stopId,
+      selectedStopName: finalName,
+      selectedTripId: null,
+      stopSelectionCount: state.stopSelectionCount + 1,
+    }));
     get().fetchDashboardData();
   },
 
